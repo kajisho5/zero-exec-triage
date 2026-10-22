@@ -6,3 +6,7 @@
 - `schemas/remediation-plan.schema.json`（ZET 所有、契約追加 A-1〜A-6 を反映）、`schemas/triage-input.schema.json`
 - `schemas/vendor/findings.schema.json`（ZES から版固定で取り込み）
 - テスト 32 件（公式 jsonschema との判定一致、Zero-Exec 検証を含む）
+
+### リリース
+
+- main の CHANGELOG 先頭の版に対応するタグと GitHub Release を、GitHub Actions（`.github/workflows/release.yml`）が自動で作成する
