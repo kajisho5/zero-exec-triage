@@ -1,0 +1,65 @@
+{
+  "background": "gradient:#2A1F44,#0B0812",
+  "darkBackground": "gradient:#1B142C,#06040B",
+  "groups": [
+    {
+      "name": "Verdict",
+      "props": {
+        "translucency": {
+          "enabled": true,
+          "value": 0.12
+        },
+        "blur-material": 0.2,
+        "shadow": {
+          "kind": "neutral",
+          "opacity": 0.5
+        },
+        "specular": true
+      },
+      "layers": [
+        {
+          "file": "verdict.svg",
+          "name": "2 Verdict",
+          "props": {
+            "glass": true,
+            "fill": {
+              "linear-gradient": [
+                "#FFFFFF",
+                "#FFE3EE"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tiers",
+      "props": {
+        "translucency": {
+          "enabled": true,
+          "value": 0.15
+        },
+        "blur-material": 0.1,
+        "shadow": {
+          "kind": "neutral",
+          "opacity": 0.35
+        }
+      },
+      "layers": [
+        {
+          "file": "tiers.svg",
+          "name": "1 Tiers",
+          "props": {
+            "glass": true,
+            "fill": {
+              "linear-gradient": [
+                "#FFC24D",
+                "#FF6FA8"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
