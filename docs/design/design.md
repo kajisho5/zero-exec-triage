@@ -1,6 +1,6 @@
 # ZET（Zero-Exec Triage）詳細設計書 — Step 1
 
-- **版**: 設計 0.1（2026-10-22）／ 実装前レビュー用
+- **版**: 設計 0.1（2026-10-22）／ 2026-10-22 承認（A-1〜A-6・B-1〜B-4 を採用）、実装 0.1.0
 - **層**: 判断層（ZES 検知層と GER 修復層の間）
 - **原則**: Zero-Exec。ZET は何も実行しない。読むのは JSON だけ、書くのは計画ファイルと追記専用ログだけ
 - **上位文書**: [ZES スキル契約書](https://github.com/kajisho5/zero-exec-shield/blob/claude/zes-v5.2-skillpact/docs/skill-contracts.md)（§1〜§4, §8）
@@ -116,26 +116,23 @@ ZES の findings を 1 件残らず「直す（remediate）／例外にする（
 
 ## 5. 構成
 
-### 5.1 ディレクトリ
+### 5.1 ディレクトリ（実装に合わせて更新）
 ```
 zero-exec-triage/
 ├── SKILL.md                         # エージェント向け手順（判断の進め方、禁止事項）
-├── zet                              # 起動スクリプト（python3 -I で zet/cli.py を実行）
+├── bin/zet                          # 起動スクリプト（bash 組み込みのみでパス解決し python3 -I で起動）
 ├── zet/
-│   ├── cli.py                       # 引数解析、終了コード
-│   ├── validate.py                  # strict スキーマ検証（標準ライブラリで実装）
-│   ├── draft.py                     # 下書き生成（§3.1）
-│   ├── invariants.py                # 不変条件 I-1〜I-12（§3.2）
-│   ├── audit.py                     # 追記専用ログ
-│   └── timeutil.py                  # RFC 3339 / 期限計算
+│   ├── __main__.py                  # エントリポイント
+│   ├── cli.py                       # 引数解析、終了コード、監査ログ記録
+│   ├── triage.py                    # 入力検証・下書き（§3.1）・不変条件 I-1〜I-12（§3.2）・確定（純粋関数）
+│   ├── core.py                      # 時刻、正規化 JSON、plan_hash、原子的書き出し
+│   ├── audit.py                     # 追記専用ログ（ハッシュチェーン）
+│   └── jsonschema_lite.py           # JSON Schema サブセット検証器（標準ライブラリ）
 ├── schemas/
-│   ├── triage-input.schema.json     # ZET が受け取る形（findings は ZES スキーマを $ref）
+│   ├── triage-input.schema.json
 │   ├── remediation-plan.schema.json # ZET が所有。GER が版固定で参照
-│   └── vendor/findings.schema.json  # ZES から版固定で取り込んだ写し（SHA-256 を記録）
-├── tests/
-│   ├── fixtures/                    # ZES の実出力サンプル（ok / partial / error / SkillPact 各種）
-│   ├── test_validate.py / test_draft.py / test_invariants.py / test_audit.py
-│   └── run-tests.sh
+│   └── vendor/{findings.schema.json, VENDOR.json}   # ZES からの版固定の写しと SHA-256
+├── tests/{run.py, run-tests.sh, test_zet.py, fixtures/}
 ├── docs/design/{design.md, flow.svg}
 ├── README.md
 └── CHANGELOG.md
@@ -153,8 +150,8 @@ class Violation:   code: str; finding_id: str | None; message: str   # code は 
 class Constraints: allowed: frozenset[Decision]; min_approvers: int; level_effective: str; due_limit: datetime
 ```
 
-### 5.4 スキーマ検証の実装方針
-実行時は標準ライブラリの自前 strict 検証（必須キー・型・列挙・パターン・未知キー拒否）を使う。テストでは `jsonschema`（開発依存のみ）で **自前検証と JSON Schema の判定が一致すること** を全フィクスチャで確認し、二重定義のずれを防ぐ。
+### 5.4 スキーマ検証の実装方針（実装時に変更）
+当初は「スキーマとは別に自前の strict 検証を書く」方針だったが、二重定義のずれを避けるため、**スキーマファイルそのものを標準ライブラリ製のサブセット検証器（`zet/jsonschema_lite.py`）で解釈する**方式に変えた。未対応キーワードがスキーマに現れた場合は例外にする。テストでは公式 `jsonschema`（開発依存のみ）と判定が一致することを確認する。
 
 ---
 
