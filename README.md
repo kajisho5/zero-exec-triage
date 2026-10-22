@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/logo/zet-logo-dark.svg">
+    <img src="brand/logo/zet-logo-light.svg" alt="zero-exec triage" height="72">
+  </picture>
+</p>
+
 # zero-exec-triage（ZET）
 
 **Zero-Exec Triage** — [Zero-Exec Shield（ZES）](https://github.com/kajisho5/zero-exec-shield) の判断層です。ZES の findings.json を受け取り、全 finding を「直す / 例外にする / 保留する」に振り分けた修復計画（remediation-plan.json）を作ります。修復の実行は [GER（gated-exec-remediation）](https://github.com/kajisho5/gated-exec-remediation) が行います。
