@@ -69,3 +69,7 @@ tests/run-tests.sh   # 単体テスト（32 件）＋ strace による execve �
 ```
 
 `jsonschema` が入っていれば検証器の判定一致テストも行います（開発時のみの依存。無ければ SKIP）。
+
+## ライセンス
+
+[Apache License 2.0](LICENSE)。脆弱性の報告は [SECURITY.md](SECURITY.md) を参照してください。
