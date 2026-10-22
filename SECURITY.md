@@ -1,6 +1,6 @@
 # セキュリティポリシー
 
-ZET（zero-exec-triage） 自体の脆弱性は、公開の Issue ではなく、GitHub の非公開報告で知らせてください。
+ZET（zero-exec-triage）自体の脆弱性は、公開の Issue ではなく、GitHub の非公開報告で知らせてください。
 
 1. リポジトリの **Security** タブを開く
 2. **Report a vulnerability** を選ぶ
@@ -16,7 +16,7 @@ ZET（zero-exec-triage） 自体の脆弱性は、公開の Issue ではなく�
 
 公開 Issue で受け付けるもの:
 
-- 検知漏れ・誤検知、IoC データの誤り（一次情報の URL を添えてください）
+- 脆弱性に当たらない不具合（判定の誤り、エラーメッセージの改善など）
 
 ## 対応
 
