@@ -1,0 +1,92 @@
+{
+  "schema_version": "1.0",
+  "incident_bundle": "ZES-2026-OCT-EMERGENCY-V5.2",
+  "scan_started_at": "2026-10-22T09:18:23Z",
+  "scan_finished_at": "2026-10-22T09:18:24Z",
+  "scan_mode": "quick",
+  "status": "error",
+  "findings": [
+    {
+      "id": "sha256:2e1cfe269bb3253f5c763251c1ebaf5e57cd5503a4889c4c40ae9361f1e22db3",
+      "level": "HIGH",
+      "module": "§2",
+      "campaign": null,
+      "path": "/srv/zes-fixtures/chaindrop/package.json",
+      "detail": "install ライフサイクルスクリプトに不審なコマンド",
+      "evidence_hash": "sha256:e9460f5b9ed5649ac475065188ccae7518ef1093ae90ed58f5dcb36ca7285d4a"
+    },
+    {
+      "id": "sha256:3af59ab4a62914ef29c9ce051faa35ff41c22a9933ce6024e8655616c29fe0d5",
+      "level": "INFO",
+      "module": "§14",
+      "campaign": null,
+      "path": "/srv/zes-fixtures/_home/.npmrc",
+      "detail": "シークレット保管場所が存在（size=20 mtime=1792657780。内容は読み取りません。侵害時はローテーション対象）",
+      "evidence_hash": "sha256:b962362ebe7560b534e834c2ede51186c2e3fceb94e12cc434a11180f22391f2"
+    },
+    {
+      "id": "sha256:9a1ec9abb50bea79c793b5655eb6bb887608da9978a54f10055b21c258fc9025",
+      "level": "CRITICAL",
+      "module": "§15",
+      "campaign": "chaindrop-keyv",
+      "path": "/srv/zes-fixtures/chaindrop/package.json",
+      "detail": "ChainDrop の preinstall フック（node setup.mjs）",
+      "evidence_hash": "sha256:e9460f5b9ed5649ac475065188ccae7518ef1093ae90ed58f5dcb36ca7285d4a"
+    },
+    {
+      "id": "sha256:046df7e8c46dd11576d87a7e1602d7311fa14911fdc4bb7ee7f45c9478f2068e",
+      "level": "HIGH",
+      "module": "§15",
+      "campaign": "chaindrop-keyv",
+      "path": "/srv/zes-fixtures/chaindrop/setup.mjs",
+      "detail": "package.json から参照される setup.mjs（ChainDrop 型ドロッパー疑い）",
+      "evidence_hash": "sha256:01276ce6141def02187ce126df28a07a35768cf2328dd94c890e56ee8ce90870"
+    },
+    {
+      "id": "sha256:088fcc761197762231e4b03bfa0dbae2b3e2eb2f967132b52273dd0133ba4e67",
+      "level": "HIGH",
+      "module": "§15",
+      "campaign": "chaindrop-keyv",
+      "path": "/srv/zes-fixtures/chaindrop/Math_Symbol.js",
+      "detail": "ワーム関連ファイル名（Math_Symbol.js）",
+      "evidence_hash": "sha256:95f589a2f0eb7a7c60a6cc6f21e5535fad8cdc709ac228e9469dc2a4ab2da61c"
+    },
+    {
+      "id": "sha256:a318f3cfd86c3670ddd5f554cc47f808e01544afe3b738a7b6a6c6154a870920",
+      "level": "CRITICAL",
+      "module": "§15",
+      "campaign": "chaindrop-keyv",
+      "path": "/srv/zes-fixtures/chaindrop/package-lock.json",
+      "detail": "侵害パッケージ keyv@6.0.0 を検出（npm）。安全版: 5.x最新",
+      "evidence_hash": "sha256:3469589bb241631f9a01e92e47901b43f247b7aa9e36426b334b30f077c4cc66"
+    },
+    {
+      "id": "sha256:9b3eaad77b509f699f067ed953a17a8159366b9e5cce64a40c4111c6aead2c7e",
+      "level": "CRITICAL",
+      "module": "§15",
+      "campaign": "solana-typosquat",
+      "path": "/srv/zes-fixtures/chaindrop/package-lock.json",
+      "detail": "侵害パッケージ @solana-labs/web3js@1.0.2 を検出（npm）",
+      "evidence_hash": "sha256:3469589bb241631f9a01e92e47901b43f247b7aa9e36426b334b30f077c4cc66"
+    },
+    {
+      "id": "sha256:2f408fb72f1167e2cab67a6be6559a7d40c1380a551aaa01c0b076e57293904b",
+      "level": "CRITICAL",
+      "module": "§17",
+      "campaign": "chaindrop-keyv",
+      "path": "/srv/zes-fixtures/chaindrop/setup.mjs",
+      "detail": "setup.mjs がエージェント/IDE 設定ディレクトリを参照（MCP 設定改ざん）",
+      "evidence_hash": "sha256:01276ce6141def02187ce126df28a07a35768cf2328dd94c890e56ee8ce90870"
+    }
+  ],
+  "errors": [
+    {
+      "module": "§6",
+      "reason": "skipped_offline"
+    },
+    {
+      "module": "core",
+      "reason": "fatal"
+    }
+  ]
+}
