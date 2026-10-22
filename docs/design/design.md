@@ -3,7 +3,7 @@
 - **版**: 設計 0.1（2026-10-22）／ 2026-10-22 承認（A-1〜A-6・B-1〜B-4 を採用）、実装 0.1.0
 - **層**: 判断層（ZES 検知層と GER 修復層の間）
 - **原則**: Zero-Exec。ZET は何も実行しない。読むのは JSON だけ、書くのは計画ファイルと追記専用ログだけ
-- **上位文書**: [ZES スキル契約書](https://github.com/kajisho5/zero-exec-shield/blob/claude/zes-v5.2-skillpact/docs/skill-contracts.md)（§1〜§4, §8）
+- **上位文書**: [ZES スキル契約書](https://github.com/kajisho5/zero-exec-shield/blob/main/docs/skill-contracts.md)（§1〜§4, §8）
 
 ```
 [ZES] findings.json ──▶ [ZET] remediation-plan.json ──▶ [GER]
@@ -50,7 +50,7 @@ ZES の findings を 1 件残らず「直す（remediate）／例外にする（
 `schema_version` / `findings`（ZES findings.json 全体）/ `policy`（`deadlines` / `decision_window_days` / `approvers`）/ `skillpact_policy`（`l3_trusted` / `diff_anomaly_threshold` / `destructive_requires_human`）。
 
 入力検証:
-- `findings` は ZES の [`schemas/findings.schema.json`](https://github.com/kajisho5/zero-exec-shield/blob/claude/zes-v5.2-skillpact/schemas/findings.schema.json)（`schema_version: "1.0"` 固定）に適合すること
+- `findings` は ZES の [`schemas/findings.schema.json`](https://github.com/kajisho5/zero-exec-shield/blob/main/schemas/findings.schema.json)（`schema_version: "1.0"` 固定）に適合すること
 - `findings.status == "error"` → **拒否**（終了コード 3）
 - `skillpact_policy.l3_trusted == true` → **拒否**（契約上 L3 を信頼根拠にしないため。true を許すのは契約改定が必要）
 - 未知フィールドは拒否（strict）
