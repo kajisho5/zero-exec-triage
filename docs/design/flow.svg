@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="820" viewBox="0 0 1280 820" role="img" aria-labelledby="t d"><title id="t">ZET 処理フロー</title><desc id="d">Zero-Exec Triage: findings.json を検証し、下書き・人間の判断・不変条件チェックを経て remediation-plan.json を確定する流れ</desc><defs><marker id="as" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8a8a8a"/></marker><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#ef4444"/></marker><marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#38bdf8"/></marker><marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#22c55e"/></marker><marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#a78bfa"/></marker></defs><rect width="100%" height="100%" fill="#0a0a0a"/><text x="40" y="52" font-size="24" font-weight="600" fill="#ededed" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">ZET — Zero-Exec Triage 処理フロー</text>
+<text x="40" y="80" font-size="14" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">判断層。何も実行しない（JSON を読み、計画と追記専用ログだけを書く）</text>
+<rect x="24" y="104" width="1232" height="536" rx="16" fill="none" stroke="#2a2a2a" stroke-width="1" stroke-dasharray="6 6"/>
+<rect x="40" y="92" width="341.6" height="22" rx="11" fill="#0a0a0a" stroke="#38bdf8" stroke-width="1"/>
+<text x="210.8" y="107" font-size="11" font-weight="500" fill="#38bdf8" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="middle">Zero-Exec レーン：コマンド実行・ファイル変更・外部通信なし</text>
+<rect x="48" y="140" width="260" height="150" rx="12" fill="#141414" stroke="#38bdf8" stroke-width="1"/>
+<rect x="48" y="152" width="3" height="126" rx="1.5" fill="#38bdf8"/>
+<text x="64" y="166" font-size="14" font-weight="600" fill="#ededed" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">入力 triage-input.json</text>
+<text x="64" y="190" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">findings（ZES findings.json）</text>
+<text x="64" y="210" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">policy（期限・承認者）</text>
+<text x="64" y="230" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">skillpact_policy</text>
+<text x="64" y="250" font-size="12" font-weight="400" fill="#a3a3a3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" text-anchor="start">schema_version: 1.0 固定</text>
+<rect x="368" y="140" width="260" height="150" rx="12" fill="#141414" stroke="#3a3a3a" stroke-width="1"/>
+<rect x="368" y="152" width="3" height="126" rx="1.5" fill="#3a3a3a"/>
+<text x="384" y="166" font-size="14" font-weight="600" fill="#ededed" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" text-anchor="start">zet validate</text>
+<text x="384" y="190" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">strict スキーマ検証</text>
+<text x="384" y="210" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">未知フィールドを拒否</text>
+<text x="384" y="230" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">findings は ZES スキーマに適合</text>
+<path d="M308,215 L366,215" fill="none" stroke="#8a8a8a" stroke-width="1.5" marker-end="url(#as)"/>
+<rect x="368" y="320" width="260" height="110" rx="12" fill="#2a0f0f" stroke="#ef4444" stroke-width="1"/>
+<rect x="368" y="332" width="3" height="86" rx="1.5" fill="#ef4444"/>
+<text x="384" y="346" font-size="14" font-weight="600" fill="#ededed" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">拒否（終了コード 3）</text>
+<text x="384" y="370" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">findings.status == "error"</text>
+<text x="384" y="390" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">l3_trusted == true</text>
+<text x="384" y="410" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">スキーマ不適合</text>
+<path d="M498,290 L498,318" fill="none" stroke="#ef4444" stroke-width="1.5" marker-end="url(#ar)"/>
+<rect x="688" y="140" width="264" height="210" rx="12" fill="#141414" stroke="#3a3a3a" stroke-width="1"/>
+<rect x="688" y="152" width="3" height="186" rx="1.5" fill="#3a3a3a"/>
+<text x="704" y="166" font-size="14" font-weight="600" fill="#ededed" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" text-anchor="start">zet draft</text>
+<text x="704" y="190" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">errors[] のモジュール → held</text>
+<text x="704" y="210" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">signed かつ divergence</text>
+<text x="704" y="230" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">  → level_effective = CRITICAL</text>
+<text x="704" y="250" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">due_at = 判断日 + deadlines[level]</text>
+<text x="704" y="270" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">divergence 非空 → exception 不可</text>
+<text x="704" y="290" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">diff_anomaly → 承認 2 名以上</text>
+<text x="704" y="310" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">decision は空のまま（自動判断しない）</text>
+<path d="M628,215 L686,215" fill="none" stroke="#8a8a8a" stroke-width="1.5" marker-end="url(#as)"/>
+<text x="638" y="207" font-size="11" font-weight="500" fill="#8a8a8a" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">合格</text>
+<rect x="1000" y="140" width="236" height="210" rx="12" fill="#262008" stroke="#eab308" stroke-width="1"/>
+<rect x="1000" y="152" width="3" height="186" rx="1.5" fill="#eab308"/>
+<text x="1016" y="166" font-size="14" font-weight="600" fill="#ededed" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">人間 / AI が判断を記入</text>
+<rect x="1188.0" y="152" width="36.0" height="20" rx="6" fill="#1c1c1c" stroke="#eab308" stroke-width="1"/>
+<text x="1206.0" y="166" font-size="11" font-weight="500" fill="#eab308" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="middle">判断</text>
+<text x="1016" y="190" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">decision（remediate /</text>
+<text x="1016" y="210" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">  exception / defer）</text>
+<text x="1016" y="230" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">owner・reason・due_at</text>
+<text x="1016" y="250" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">decided_by・approved_by</text>
+<text x="1016" y="270" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">action{type, target}</text>
+<path d="M952,245 L998,245" fill="none" stroke="#8a8a8a" stroke-width="1.5" marker-end="url(#as)"/>
+<rect x="1000" y="400" width="236" height="200" rx="12" fill="#141414" stroke="#3a3a3a" stroke-width="1"/>
+<rect x="1000" y="412" width="3" height="176" rx="1.5" fill="#3a3a3a"/>
+<text x="1016" y="426" font-size="14" font-weight="600" fill="#ededed" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" text-anchor="start">zet check</text>
+<text x="1016" y="450" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">I-1 全 finding に判断 1 回</text>
+<text x="1016" y="470" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">I-3 exception は判断者以外が承認</text>
+<text x="1016" y="490" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">I-5 divergence → exception 禁止</text>
+<text x="1016" y="510" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">I-6 diff_anomaly → 2 名</text>
+<text x="1016" y="530" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">I-7 signed+乖離 → CRITICAL</text>
+<text x="1016" y="550" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">…I-12（設計書 §3.2）</text>
+<path d="M1118,350 L1118,398" fill="none" stroke="#8a8a8a" stroke-width="1.5" marker-end="url(#as)"/>
+<path d="M1236,500 L1250,500 L1250,300 L1238,300" fill="none" stroke="#ef4444" stroke-width="1.5" marker-end="url(#ar)"/>
+<text x="1150" y="380" font-size="11" font-weight="500" fill="#ef4444" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">違反 → 差し戻し</text>
+<rect x="688" y="430" width="264" height="170" rx="12" fill="#141414" stroke="#22c55e" stroke-width="1"/>
+<rect x="688" y="442" width="3" height="146" rx="1.5" fill="#22c55e"/>
+<text x="704" y="456" font-size="14" font-weight="600" fill="#ededed" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" text-anchor="start">zet finalize</text>
+<text x="704" y="480" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">I-1〜I-12 全合格時のみ書き出し</text>
+<text x="704" y="500" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">一時ファイル → os.replace</text>
+<text x="704" y="520" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">plan_hash を付与</text>
+<text x="704" y="540" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">status: ok / partial</text>
+<path d="M998,515 L954,515" fill="none" stroke="#22c55e" stroke-width="1.5" marker-end="url(#ag)"/>
+<text x="962" y="507" font-size="11" font-weight="500" fill="#22c55e" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">合格</text>
+<rect x="368" y="470" width="260" height="130" rx="12" fill="#0c2214" stroke="#22c55e" stroke-width="1"/>
+<rect x="368" y="482" width="3" height="106" rx="1.5" fill="#22c55e"/>
+<text x="384" y="496" font-size="14" font-weight="600" fill="#ededed" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">remediation-plan.json</text>
+<text x="384" y="520" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">ZET がスキーマを所有</text>
+<text x="384" y="540" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">GER は版固定で参照</text>
+<text x="384" y="560" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">held は GER に渡さない</text>
+<path d="M688,535 L630,535" fill="none" stroke="#22c55e" stroke-width="1.5" marker-end="url(#ag)"/>
+<path d="M368,535 L300,535" fill="none" stroke="#22c55e" stroke-width="1.5" marker-end="url(#ag)"/>
+<rect x="48" y="470" width="250" height="130" rx="12" fill="#1b1430" stroke="#a78bfa" stroke-width="1"/>
+<rect x="48" y="482" width="3" height="106" rx="1.5" fill="#a78bfa"/>
+<text x="64" y="496" font-size="14" font-weight="600" fill="#ededed" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">→ GER（修復層）</text>
+<text x="64" y="520" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">承認・dry-run を経て実行</text>
+<text x="64" y="540" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">status: draft は拒否</text>
+<rect x="48" y="672" width="1188" height="116" rx="12" fill="#141414" stroke="#3a3a3a" stroke-width="1"/>
+<rect x="48" y="684" width="3" height="92" rx="1.5" fill="#3a3a3a"/>
+<text x="64" y="698" font-size="14" font-weight="600" fill="#ededed" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">監査ログ zet-audit.jsonl（追記専用・ZES/GER と別ファイル）</text>
+<text x="64" y="722" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">skill / version / command / input_hash / output_hash / started_at / finished_at / operator / result / violations</text>
+<text x="64" y="742" font-size="12" font-weight="400" fill="#a3a3a3" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">拒否も必ず記録。prev_hash によるハッシュチェーンで改ざんを検出（要承認 B-2）</text>
+<path d="M498,640 L498,670" fill="none" stroke="#8a8a8a" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#as)"/>
+<path d="M820,640 L820,670" fill="none" stroke="#8a8a8a" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#as)"/>
+<path d="M1118,640 L1118,670" fill="none" stroke="#8a8a8a" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#as)"/>
+<text x="40" y="812" font-size="12" font-weight="400" fill="#8a8a8a" font-family="system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif" text-anchor="start">凡例: 青=入力 / 黄=人の判断 / 赤=拒否・差し戻し / 緑=確定出力 / 紫=後段（GER）</text></svg>
