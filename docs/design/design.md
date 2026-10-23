@@ -33,6 +33,7 @@ ZES の findings を 1 件残らず「直す（remediate）／例外にする（
 | `zet draft <triage-input.json>` | 同上 | 下書き plan（標準出力、`status` は常に `"draft"` 相当として扱い GER へは渡せない） | 同上 |
 | `zet check <triage-input.json> <plan.json>` | 入力＋人間/AI が埋めた plan | 違反一覧 | 0=合格 / 3=違反あり |
 | `zet finalize <triage-input.json> <plan.json>` | 同上 | 確定 plan（`check` 合格時のみ書き出し、監査ログ追記） | 0 / 3 |
+| `zet verify-log [LOG]` | 監査ログ（既定 `$ZET_LOG_DIR/zet-audit.jsonl`） | ハッシュチェーンの検証結果（標準エラー。この実行は記録しない） | 0=健全 / 3=破損 / 64=ログが無い・読めない |
 
 `finalize` だけが GER に渡せる plan を出す。`draft` の出力は意図的に GER の入力スキーマに通らない形（`status: "draft"`）にし、未判断の計画が修復層へ流れることを防ぐ（要承認 A-1）。
 
@@ -47,12 +48,13 @@ ZES の findings を 1 件残らず「直す（remediate）／例外にする（
 ## 2. 入出力
 
 ### 2.1 入力（契約 §2）
-`schema_version` / `findings`（ZES findings.json 全体）/ `policy`（`deadlines` / `decision_window_days` / `approvers`）/ `skillpact_policy`（`l3_trusted` / `diff_anomaly_threshold` / `destructive_requires_human`）。
+`schema_version` / `findings`（ZES findings.json 全体）/ `policy`（`deadlines` / `decision_window_days` / `approvers`）/ `skillpact_policy`（`l3_trusted`。`diff_anomaly_threshold` / `destructive_requires_human` は予約）。
 
 入力検証:
 - `findings` は ZES の [`schemas/findings.schema.json`](https://github.com/kajisho5/zero-exec-shield/blob/main/schemas/findings.schema.json)（`schema_version: "1.0"` 固定）に適合すること
 - `findings.status == "error"` → **拒否**（終了コード 3）
 - `skillpact_policy.l3_trusted == true` → **拒否**（契約上 L3 を信頼根拠にしないため。true を許すのは契約改定が必要）
+- `skillpact_policy.diff_anomaly_threshold` / `destructive_requires_human` → 指定されたら **拒否**（「予約済みで未実装」と表示）。どちらも契約 §2 にあるが、ZET は評価していなかった。受け取って黙って無視すると、効いていない設定（例: `destructive_requires_human: true`）を効いていると誤解させるため、必須から外し、指定を拒否する。実装しなかった理由: ZES の `diff_anomaly` は真偽値でしきい値を当てる数値が無い。`destructive_requires_human` は判断者が人間か AI かを ZET が区別できず（`decided_by` は名前だけ）、不可逆操作の二重承認は GER の G-6 が既に課している
 - 未知フィールドは拒否（strict）
 
 ### 2.2 出力（契約 §3）
@@ -68,6 +70,14 @@ ZES の findings を 1 件残らず「直す（remediate）／例外にする（
 | A-4 | `items[].action.reversible`（bool）と `items[].action.skillpact_effects`（配列）を追加 | GER は findings を読まない（飛び越し禁止）ため、「`reversible: false` は二重承認」「exec/network/spend/send（SkillPact 0.8）宣言スキルの修復制限」を GER が判定する材料を plan で渡す必要がある |
 | A-5 | `held[]` に `module` を任意で追加（`finding_id` は `null` 可） | `errors[]` のモジュールは finding が 0 件のこともあり、finding 単位の held では「未確定」を表現できない |
 | A-6 | `plan_hash`（plan 本体の正規化 JSON の SHA-256）を出力に含める | GER の承認トークンを plan 内容に束縛し、承認後の差し替えを検出するため（GER 設計書 §4） |
+| A-7 | plan に `now_override: true`（任意。`--now` で draft / finalize した plan） | テスト用の時刻上書きで作った計画（古い・未来の created_at を持ちうる）を GER が既定で拒否できるようにする |
+| A-8 | `items[].action.evidence_hash`（任意。finalize で finding の `evidence_hash` を写す） | GER が G-7 で、検知時から対象ファイルが変わっていないことを確かめる（ZES の規則: 100MB 以下の通常ファイルは内容の SHA-256、100MB 超はパス・サイズ・mtime の SHA-256） |
+| A-9 | `items[].skillpact`（任意。finding の `signed` / `divergence` / `diff_anomaly` / `declared_effects` の要約） | GER が findings を読まずに I-5 / I-6 / I-7 と `skillpact_effects` の整合を再検査するため |
+| A-10 | `action.skillpact_effects` の要素を SkillPact 0.8 の 6 効果（`read` / `write` / `network` / `exec` / `spend` / `send`）に限定 | `"EXEC"` や `" exec "` のような表記揺れで G-6 の危険な効果の判定をすり抜けさせない |
+
+A-7〜A-9 はいずれも任意のフィールドで、従来の plan はそのまま有効（後方互換）。ただし新しい ZET の確定 plan は A-8 / A-9 を含むため、受け取る GER もこの版のスキーマを取り込んでいる必要がある。
+
+**承認トークンの限界**: `plan_hash` は完全性（承認後に変わっていないこと）だけを示し、真正性（ZET が作ったこと）は示さない。finalize 後に plan を書き換えて `plan_hash` を計算し直すと暗号的には検出できない（承認者の署名が必要。将来の課題）。そのため GER は、findings を読まずに plan だけで評価できる不変条件（I-1 の一意性、I-3、I-4 の形と対象の正規化、I-5 / I-6 / I-7 の `skillpact` 要約との整合、I-9 の日付の前後関係、I-11、I-12 の一部）を再検査し、chmod は現在の mode に権限を足さない（絞るだけ）ことを G-7 で確かめる。
 
 ---
 
@@ -89,10 +99,10 @@ ZES の findings を 1 件残らず「直す（remediate）／例外にする（
 | I-1 | 入力の全 finding が `items[]` か `held[]` のどちらか一方に **ちょうど 1 回** 現れる | 全 finding に判断付与 |
 | I-2 | `items[].finding_id` が入力に存在する（架空 ID 禁止） | 改変禁止 |
 | I-3 | `exception` → `exception_type` ∈ {not_affected, fix_unavailable, risk_accepted}、`reason`・`recheck_at` 必須、`approved_by` ≥1 かつ `decided_by` を含まない | 契約 §4 |
-| I-4 | `remediate` → `owner` / `due_at` / `action{type,target}` 必須、`target` は絶対パス | 契約 §4 |
-| I-5 | `skillpact.divergence` 非空 → `decision != exception` | SkillPact 不変条件 |
-| I-6 | `skillpact.diff_anomaly` → `approved_by` 2 名以上（重複除去後） | 同上 |
-| I-7 | `signed && divergence` → `level_effective == CRITICAL` | 同上 |
+| I-4 | `remediate` → `owner` / `due_at` / `action{type,target}` 必須。`target` は正規化済みの絶対パスで、finding の `path` と一致（配下のパスは不可。ZET は `path` がディレクトリかを知らず、前方一致では `/` を指す finding が任意のファイルを許してしまう）。chmod の mode は特殊ビット・world-writable 不可。`reversible` / `skillpact_effects` / `evidence_hash` は導出値と一致 | 契約 §4、計画外の対象の禁止 |
+| I-5 | `skillpact.divergence` 非空 → `decision != exception`。`items[].skillpact` は入力と一致（確定 plan では必須） | SkillPact 不変条件 |
+| I-6 | `skillpact.diff_anomaly` → `approved_by` 2 名以上（重複除去後）。exec / network / spend / send を宣言したスキルの finding の `remediate` も 2 名以上（GER の G-6 と同じ） | 同上 |
+| I-7 | `signed && divergence` → `level_effective == CRITICAL`（`signed` は署名フィールドがあることだけを表し、ZES は署名を検証しない） | 同上 |
 | I-8 | `approved_by` は全員 `policy.approvers` に含まれる | 承認者の許可リスト |
 | I-9 | `due_at ≤ decided_at + deadlines[level_effective]` 日 | 期限超過の計画を拒否 |
 | I-10 | `held` の finding は `items` に入らない（修復層へ渡さない） | 契約 §4 |
@@ -109,6 +119,8 @@ ZES の findings を 1 件残らず「直す（remediate）／例外にする（
 - 1 行 1 レコード: `skill`（"zet"）/ `version` / `command` / `input_hash` / `output_hash` / `started_at` / `finished_at` / `operator` / `result`（ok/rejected）/ `violations`（件数）
 - 追記は `O_APPEND` で開き、書き込み前に既存ファイルを切り詰めない。拒否（違反）も必ず記録する
 - 提案（要承認 B-2）: 各レコードに直前レコードの SHA-256（`prev_hash`）を持たせるハッシュチェーンで改ざん検出を可能にする
+- 追記の前に、排他ロックの下で末尾の連結（最終行が改行で終わる JSON object で、`prev_hash` が直前の行のハッシュと一致すること）を確かめ、壊れていれば追記しない（コマンドは何もせず終了コード 64）。壊れたチェーンの後ろに正しい連結の記録を足すと、破損箇所が埋もれて見落とされやすくなるため。以前は途中で切れた最終行の後ろに改行を補って追記していたが、それも拒否する
+- 全体の検証は `zet verify-log [LOG]`（読み取りのみ。監査ログには記録しない）
 
 `operator` は `--operator` 引数で必須指定（環境変数のユーザー名は自己申告にすぎないため、明示させる）。
 
@@ -165,7 +177,7 @@ class Constraints: allowed: frozenset[Decision]; min_approvers: int; level_effec
 | `approved_by` に同一人物が重複 | 重複除去後に人数判定（I-6） |
 | `decided_by` が `approved_by` に含まれる exception | I-3 違反（自己承認） |
 | ZES の `schema_version` が 1.0 以外 | 拒否（版固定） |
-| `--now` 未指定 | 実時刻（UTC）。`--now` はテスト専用（`ZET_ALLOW_NOW_OVERRIDE=1` が必要、監査ログに `now_override: true`）。テストは常に `--now` 固定 |
+| `--now` 未指定 | 実時刻（UTC）。`--now` はテスト専用（`ZET_ALLOW_NOW_OVERRIDE=1` が必要、監査ログと出力する plan に `now_override: true`）。テストは常に `--now` 固定 |
 | 巨大入力（数万件） | 線形処理。ID の重複検出は dict で O(n) |
 
 ---
