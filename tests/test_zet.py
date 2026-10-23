@@ -985,17 +985,19 @@ class TestRegressionsR3Fixes(unittest.TestCase):
         final = triage.finalize(self.inp, self.plan)
         for it in final["items"]:
             x = self.finding(it["finding_id"])
-            if it["action"]:
-                self.assertEqual(it["action"]["evidence_hash"], x["evidence_hash"])
+            if it["action"]:  # plan 1.1: evidence（kind と hash）。1.0 の evidence_hash は持たない
+                self.assertEqual(it["action"]["evidence"]["hash"], x["evidence_hash"])
+                self.assertEqual(it["action"]["evidence"], triage.evidence_of(x))
+                self.assertNotIn("evidence_hash", it["action"])
             if x.get("skillpact"):
                 self.assertEqual(it["skillpact"]["divergence"], x["skillpact"]["divergence"])
                 self.assertEqual(it["skillpact"]["declared_effects"], x["skillpact"]["declared_effects"])
             else:
                 self.assertNotIn("skillpact", it)
-        p = copy.deepcopy(final); self.remediate_item(p)["action"]["evidence_hash"] = "sha256:" + "0" * 64
+        p = copy.deepcopy(final); self.remediate_item(p)["action"]["evidence"]["hash"] = "sha256:" + "0" * 64
         p["plan_hash"] = plan_hash(p)
         self.assertIn("I-4", codes(triage.check(self.inp, p, final=True)))
-        p = copy.deepcopy(final); del self.remediate_item(p)["action"]["evidence_hash"]; p["plan_hash"] = plan_hash(p)
+        p = copy.deepcopy(final); del self.remediate_item(p)["action"]["evidence"]; p["plan_hash"] = plan_hash(p)
         self.assertIn("I-4", codes(triage.check(self.inp, p, final=True)))
         p = copy.deepcopy(final)
         it = next(i for i in p["items"] if "skillpact" in i)

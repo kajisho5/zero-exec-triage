@@ -21,10 +21,16 @@ DECISIONS = ("remediate", "exception", "defer")
 # 外部への副作用・コード実行を起こしうる SkillPact 0.8 の効果（GER の G-6 と同じ集合。ger/core.py と一致させる）。
 # read（機密ファイルの読み取りを含む。旧 secrets）と write（作業領域外への書き込みを含む。旧 persist）は単独では含めない
 RISKY_EFFECTS = ("exec", "network", "spend", "send")
-# 操作種別ごとの可逆性（A-4）。未知の種別は不可逆として扱う（安全側）
-REVERSIBLE_BY_TYPE = {"chmod": True, "write_config": False, "rotate_secret": False}
+# 操作種別ごとの可逆性（A-4）。未知の種別は不可逆として扱う（安全側）。GER の操作はどれも可逆
+# （削除する操作は無く、変える前の状態を GER の隔離ストアに残す。checklist はファイルを変えない）
+REVERSIBLE_BY_TYPE = {"chmod": True, "quarantine": True, "edit_json": True, "edit_toml": True, "remove_line": True,
+                      "disable_mcp_server": True, "checklist": True, "write_config": False, "rotate_secret": False}
 # GER の操作レジストリ（ger/actions/__init__.py の REGISTRY）にある種別。これ以外は GER が G-5 で拒否する（I-4）
-GER_ACTION_TYPES = frozenset({"chmod"})
+GER_ACTION_TYPES = frozenset({"chmod", "quarantine", "edit_json", "edit_toml", "remove_line", "disable_mcp_server",
+                              "checklist"})
+# ファイルを変える操作（checklist 以外）
+FS_CHANGING = GER_ACTION_TYPES - {"checklist"}
+PLAN_SCHEMA_VERSION = "1.1"
 MAX_DEPTH = 64  # GER（ger/core.py）と同じ入れ子の上限。GER が読めない文書を確定させない（I-11）
 
 

@@ -27,7 +27,17 @@
           }
         },
         "decision_window_days": { "type": "integer", "minimum": 1, "maximum": 3650 },
-        "approvers": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/person" } }
+        "approvers": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/person" } },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["roots"],
+          "description": "承認する検査範囲（plan.scope になる。GER の G-9）。roots は ZES の --root、home は ZES_HOME。findings 1.1 に scan_roots があればそちらを roots に使う。ファイルを変える action にはどちらかが必要",
+          "properties": {
+            "roots": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^/" } },
+            "home": { "type": ["string", "null"], "pattern": "^/" }
+          }
+        }
       }
     },
     "skillpact_policy": {

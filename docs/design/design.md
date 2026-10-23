@@ -1,6 +1,7 @@
 # ZET（Zero-Exec Triage）詳細設計書 — Step 1
 
 - **版**: 設計 0.1（2026-10-22）／ 2026-10-22 承認（A-1〜A-6・B-1〜B-4 を採用）、実装 0.1.0
+- **追補**: GER 修復能力拡張 設計 0.2（2026-10-23 承認。Q-1〜Q-6 を推奨どおり採用）の Phase 1 に合わせた判断層の変更（plan 1.1、提案、I-4 の関係、I-13）を §9 に記す
 - **層**: 判断層（ZES 検知層と GER 修復層の間）
 - **原則**: Zero-Exec。ZET は何も実行しない。読むのは JSON だけ、書くのは計画ファイルと追記専用ログだけ
 - **上位文書**: [ZES スキル契約書](https://github.com/kajisho5/zero-exec-shield/blob/main/docs/skill-contracts.md)（§1〜§4, §8）
@@ -90,7 +91,8 @@ A-7〜A-9 はいずれも任意のフィールドで、従来の plan はその�
 4. **選べる判断の制限**（下書きに `allowed_decisions` として注記、確定時には除去）:
    - `skillpact.divergence` 非空 → `exception` 不可（`remediate` / `defer` のみ）
 5. **必要承認数**: `skillpact.diff_anomaly == true` → `approved_by` 2 名以上、`exception` → 1 名以上（判断者以外）
-6. `decision` は空のまま出す（自動で決めない）。`level_effective` が INFO の finding だけは `defer`＋`reason: "informational"` を既定値として入れる（要承認 B-1）
+6. `decision` は空のまま出す（自動で決めない）。`level_effective` が INFO の finding だけは `defer`＋`reason: "informational"` を既定値として入れる（要承認 B-1）。ただし他の finding の quarantine が同じ対象を扱う INFO は既定値を入れない（§9）
+7. **修復の提案**（0.2）: `constraints.suggested_actions` に `auto`（GER の操作）と `checklist` を付ける。同じ対象の auto は `action.group` でまとめる（§9）
 
 ### 3.2 不変条件チェック（`check` / `finalize`）
 
@@ -108,8 +110,11 @@ A-7〜A-9 はいずれも任意のフィールドで、従来の plan はその�
 | I-10 | `held` の finding は `items` に入らない（修復層へ渡さない） | 契約 §4 |
 | I-11 | タイムスタンプはすべて RFC 3339 UTC（`Z`）、未知フィールドなし | 共通契約 |
 | I-12 | 入力が `partial` なら plan も `partial` かつ `held` 非空 | 失敗の伝播 |
+| I-13 | 自動修復の `action.followup` に、finding から決まる必須の後続作業（§9.3）がある。checklist と followup は ZET の雛形の手順をすべて変えずに含む。findings 1.1 では `kind` に許された操作だけ | 自動修復はインシデントの終わりではない |
 
-`finalize` は I-1〜I-12 がすべて合格した場合のみ、`status: "ok"|"partial"` の plan と `plan_hash` を書き出す。
+0.2 で I-4 を広げた: `target` は `action.relation`（§9.2）で finding の `path` と結びつけばよい。`relation: none`（target null）は checklist だけ。確定した action の params は GER の `actions.schema.json`（vendor）に合うこと。ファイルを変える item が同じ対象を持てるのは同じ `group` のときだけ。chmod 以外のファイルを変える操作には入力から導いた `plan.scope` が必要で、対象はその下。root が必要な対象（`/etc` など）は承認者 2 名（I-6）。
+
+`finalize` は I-1〜I-13 がすべて合格した場合のみ、`status: "ok"|"partial"` の plan と `plan_hash` を書き出す。
 
 ---
 
@@ -200,3 +205,28 @@ class Constraints: allowed: frozenset[Decision]; min_approvers: int; level_effec
 | B-2 | 監査ログのハッシュチェーン（`prev_hash`） | 採用 |
 | B-3 | 実装言語を Python 3.11+ 標準ライブラリのみとする（ZES は bash+jq） | 採用（日付計算・strict 検証の正確さを優先） |
 | B-4 | `zet` コマンド名と 4 サブコマンド構成 | 採用 |
+
+
+---
+
+## 9. 修復の提案と plan 1.1（GER 修復能力拡張 Phase 1）
+
+### 9.1 plan 1.1
+- `schema_version: "1.1"`（ZET 0.2 の出力。1.0 の計画も有効で、GER は 1.0 では chmod だけを実行する）
+- `scope: {roots, home}`: 承認する検査範囲。triage-input の `policy.scope`（findings 1.1 では `scan_roots` を roots に使う）から作る。GER の G-9 は対象がこの下にあることと、隔離ストアが roots の下に無いことを求める
+- `action`: `relation`（§9.2）、`finding_path`（finalize が写す）、`group`、`evidence: {kind, hash}`（finalize が写す。1.1 は finding の `evidence`、1.0 は `evidence_hash` が detail の SHA-256 と一致すれば `detail`、そうでなければ `file`）、`followup`（チェックリストの配列）。`target` は checklist だけ null にできる。`evidence_hash` は 1.0 の互換用
+- `constraints.suggested_actions[]`（draft だけ）: `{label: auto|checklist, action, note?}`
+
+### 9.2 関係（I-4）
+`self` / `npm_pkg_dir` / `npm_installed` / `pypi_record` / `ext_dir` / `skill_dir` / `none`（Phase 1）。`plist_program` / `preload_lib` / `unit_wants` は Phase 2 で、findings 1.1 の `related` にあるときだけ（GER Phase 1 は拒否する）。字句上の条件は GER（`ger/actions/quarantine.py`）と同じで、GER は同じ関係をファイルシステムで確かめ直す。
+
+### 9.3 対応表と必須の後続作業（`zet/remedy.py`）
+findings 1.0 では `module`・`path`（basename とディレクトリの形）・`level`・`campaign` だけで判断する（`detail` は解析しない。設計 0.2 Q-1 のとおり壊れやすく安全でないため）。主な対応は README の表を参照。同じ対象への auto は group にまとめ、他の finding の **quarantine** が同じ対象（同じファイル、スキルのディレクトリ、拡張機能のディレクトリ、node_modules のパッケージ）を扱う finding には同じ group の quarantine を提案する（編集は他の finding を消さないのでまとめない）。
+
+必須の後続作業は、提案と同じ操作（type と target）を採用した場合は提案の `followup`、それ以外の自動修復では、campaign のある finding・マルウェアの痕跡のモジュール（§2 §15 §18 §20 §24 §30 §31 §40 §42）なら CL-IR。chmod と checklist には求めない。雛形（CL-PKG・CL-VENV・CL-SECRET・CL-IR・CL-LAUNCHD・CL-SYSTEMD・CL-CRON・CL-EXT・CL-MCP・CL-MCP-PIN・CL-SHELL・CL-LDSO・CL-PHP・CL-PHP-RESTART・CL-UPGRADE・CL-PWN・CL-PIN・CL-SKILL・CL-ENV・CL-REVIEW）は閉じた表で、`{path}` だけを finding の path に置き換える。
+
+### 9.4 findings 1.1（草案）
+ZES は findings 1.1 をまだ出さない。ZET は `schema_version: "1.1"` の findings を `schemas/vendor/findings-1.1-draft.schema.json`（ZET が書いた草案。VENDOR.json に `status: draft`）で検証し、任意の `kind` / `subject` / `locators` / `related` / `evidence` / `scan_roots` を使う。1.0 の findings に 1.1 の項目があれば strict のため拒否する。ZES が 1.1 を出すようになったら、ZES の `schemas/findings.schema.json` を正として写し直す。
+
+### 9.5 流れ
+`zet draft` → 判断者が提案を採用 → `ger preview`（GER が現在のファイルから params を埋める。拒否は checklist に切り替える）→ `zet check` / `finalize` → 承認 → GER。

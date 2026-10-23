@@ -1,14 +1,17 @@
 """判断ロジック: 入力検証・下書き生成・不変条件チェック・確定。I/O を持たない純粋関数。"""
 from __future__ import annotations
 
+import copy
 import datetime as dt
+import hashlib
 import posixpath
 import re
 import uuid
 from typing import Any
 
-from .core import (DECISIONS, GER_ACTION_TYPES, REVERSIBLE_BY_TYPE, RISKY_EFFECTS, ContractError, Violation,
-                   fmt_ts, parse_ts, plan_hash, schema_violations)
+from . import remedy
+from .core import (DECISIONS, FS_CHANGING, GER_ACTION_TYPES, PLAN_SCHEMA_VERSION, REVERSIBLE_BY_TYPE, RISKY_EFFECTS,
+                   ContractError, Violation, fmt_ts, parse_ts, plan_hash, schema_violations, validator)
 
 MAX_DAYS = 3650  # triage-input.schema.json の deadlines / decision_window_days の最大値
 _CHMOD_MODE = re.compile(r"0[0-7]{3}")  # GER と同じ。特殊ビット（setuid / setgid / sticky）は不可
@@ -23,7 +26,10 @@ def validate_input(inp: Any) -> list[Violation]:
     if v:
         return v
     f = inp["findings"]
-    v = schema_violations("vendor/findings.schema.json", f, "findings")
+    # findings 1.0（ZES の現行）と 1.1（kind / subject / locators / related / evidence / scan_roots。ZES 側は未実装の草案）
+    name = "vendor/findings-1.1-draft.schema.json" if isinstance(f, dict) and f.get("schema_version") == "1.1" \
+        else "vendor/findings.schema.json"
+    v = schema_violations(name, f, "findings")
     if v:
         return v
     if f["status"] == "error":
@@ -71,9 +77,11 @@ def allowed_decisions(finding: dict) -> tuple[str, ...]:
     return DECISIONS
 
 
-def min_approvers(finding: dict, decision: str | None) -> int:
+def min_approvers(finding: dict, decision: str | None, action: dict | None = None) -> int:
     sp = finding.get("skillpact")
     n = 0
+    if decision == "remediate" and action and action.get("type") in FS_CHANGING and remedy.root_required(action.get("target")):
+        n = 2  # root が必要な対象（/etc など）は GER と同じく承認者 2 名
     if decision == "exception":
         n = 1
     if sp and sp["diff_anomaly"]:
@@ -107,21 +115,69 @@ def _same_summary(a: dict, b: dict) -> bool:
             and sorted(a["declared_effects"]) == sorted(b["declared_effects"]))
 
 
-def _action_shape_violations(a: dict, fid: str, finding: dict) -> list[Violation]:
-    """GER が必ず拒否する action と、finding と無関係な対象への action を確定させない（I-4）。"""
+def evidence_of(finding: dict) -> dict:
+    """action.evidence: findings 1.1 の evidence、なければ 1.0 の evidence_hash から導く
+    （ZES は通常ファイルなら内容のハッシュ、それ以外は detail のハッシュを入れる。detail と一致すれば detail とみなす）。"""
+    if isinstance(finding.get("evidence"), dict) and "hash" in finding["evidence"]:
+        return {"kind": finding["evidence"].get("kind", "file"), "hash": finding["evidence"]["hash"]}
+    h = finding["evidence_hash"]
+    det = "sha256:" + hashlib.sha256(finding["detail"].encode("utf-8", "surrogateescape")).hexdigest()
+    return {"kind": "detail" if h == det else "file", "hash": h}
+
+
+def scope_of(inp: dict) -> dict | None:
+    """plan.scope（承認する検査範囲）。findings 1.1 の scan_roots、なければ triage-input の policy.scope。"""
+    f = inp["findings"]
+    pol = inp["policy"].get("scope")
+    if f.get("scan_roots"):
+        return {"roots": list(f["scan_roots"]), "home": (pol or {}).get("home")}
+    if pol:
+        return {"roots": list(pol["roots"]), "home": pol.get("home")}
+    return None
+
+
+def _under(path: str, root: str) -> bool:
+    root = root.rstrip("/") or "/"
+    return root == "/" or path == root or path.startswith(root + "/")
+
+
+def _is_draft_params(a: dict) -> bool:
+    p = a["params"]
+    return isinstance(p, dict) and ("select" in p or (not p and a["type"] in FS_CHANGING - {"chmod"}))
+
+
+def _action_shape_violations(a: dict, fid: str, finding: dict, sug: list | None = None, final: bool = False) -> list[Violation]:
+    """GER が必ず拒否する action と、finding と無関係な対象への action を確定させない（I-4 / I-13）。"""
     v: list[Violation] = []
     t = a["target"]
+    path = finding["path"]
     # normpath は先頭の // を残す（POSIX で処理系定義）ため、// はどこにあっても別に拒否する（GER は拒否する）
-    if not t.startswith("/") or "//" in t or posixpath.normpath(t) != t or ".." in t.split("/"):
+    if t is not None and (not t.startswith("/") or "//" in t or posixpath.normpath(t) != t or ".." in t.split("/")):
         v.append(Violation("I-4", "action.target は正規化された絶対パスにすること（. / .. / 連続した / を含まない）", fid))
-    # 対象は finding が指すパスそのものに限る。配下のパスは許さない（ZET はファイルシステムを見ないため
-    # path がディレクトリかを判断できず、"/" や "/home" を指す finding で任意のファイルを対象にできてしまう）
-    if finding["path"] is None:
-        v.append(Violation("I-4", "path が null の finding には action を設定できません（対象を特定できない）", fid))
-    elif t != finding["path"]:
-        v.append(Violation("I-4", "action.target は finding の path と一致させること（配下のパスや別のパスは不可）", fid))
     if a["type"] not in GER_ACTION_TYPES:
         v.append(Violation("I-4", f"action.type {a['type']} は GER が実行できる操作種別（{', '.join(sorted(GER_ACTION_TYPES))}）ではありません", fid))
+    if "finding_path" in a and a["finding_path"] != path:
+        v.append(Violation("I-4", "action.finding_path は finding の path と一致させること", fid))
+    rel = a.get("relation", "none" if t is None else "self")
+    if a["type"] == "checklist":
+        if t is not None and t != path:
+            v.append(Violation("I-4", "checklist の action.target は finding の path（または null）にすること", fid))
+        if rel != ("none" if t is None else "self"):
+            v.append(Violation("I-4", "checklist の relation は self（target が null なら none）にすること", fid))
+    elif t is None:
+        v.append(Violation("I-4", "target が null にできるのは checklist だけです（path が null の finding には action を設定できません。対象を特定できない）"
+                           if path is None else "target が null にできるのは checklist だけです", fid))
+    elif path is None:
+        v.append(Violation("I-4", "path が null の finding には action を設定できません（対象を特定できない。checklist の target null は可）", fid))
+    elif rel == "self" and t != path:
+        v.append(Violation("I-4", "action.target は finding の path と一致させること（配下のパスや別のパスは不可。relation で導ける対象を除く）", fid))
+    else:
+        why = remedy.lexical_relation(rel, t, path, finding.get("related"))
+        if why:
+            v.append(Violation("I-4", why, fid))
+    if a["type"] in GER_ACTION_TYPES and (final or not _is_draft_params(a)):
+        for e in validator("vendor/actions.schema.json").errors({"type": a["type"], "params": a["params"]}):
+            v.append(Violation("I-4", f"action.params{e}（形は GER の actions.schema.json。ger preview で埋める）", fid))
     if a["type"] == "chmod":
         p = a["params"]
         if set(p) != {"mode"} or not isinstance(p["mode"], str) or not _CHMOD_MODE.fullmatch(p["mode"]):
@@ -129,6 +185,21 @@ def _action_shape_violations(a: dict, fid: str, finding: dict) -> list[Violation
         elif int(p["mode"], 8) & 0o002:
             # 現在の mode は ZET からは見えない（GER が G-7 で「権限を足さない」ことを確かめる）。静的に分かる緩和は拒否する
             v.append(Violation("I-4", "chmod で他者の書き込み権限（world-writable）は付けられません（修復は権限を絞る操作に限る）", fid))
+    if a["type"] == "checklist" and isinstance(a["params"], dict) and not remedy.template_ok(a["params"], path):
+        v.append(Violation("I-13", "checklist の手順は ZET の雛形（template）の手順をすべて含むこと", fid))
+    fus = a.get("followup", [])
+    if a["type"] == "checklist" and fus:
+        v.append(Violation("I-4", "checklist の action に followup は付けられません（手順は params.steps に書く）", fid))
+    for fu in fus:
+        if not remedy.template_ok(fu, path):
+            v.append(Violation("I-13", f"action.followup の {fu.get('template')} は ZET の雛形の手順をすべて含むこと", fid))
+    need = remedy.required_followups(finding, a, sug or [])
+    missing = sorted(need - {fu.get("template") for fu in fus})
+    if missing:
+        v.append(Violation("I-13", f"自動修復には後続作業 {', '.join(missing)} が必須です（action.followup）", fid))
+    kind = finding.get("kind")
+    if kind in remedy.KIND_ACTIONS and a["type"] not in remedy.KIND_ACTIONS[kind]:
+        v.append(Violation("I-13", f"kind {kind} の finding に操作 {a['type']} は使えません（{', '.join(sorted(remedy.KIND_ACTIONS[kind]))}）", fid))
     return v
 
 
@@ -161,13 +232,20 @@ def draft(inp: dict, now: dt.datetime, operator: str, plan_id: str | None = None
     for mod in sorted(errmods):
         for reason in sorted(set(errmods[mod])):
             held.append({"finding_id": None, "module": mod, "reason": f"scan_error:{reason}"})
+    judged = [x for x in f["findings"] if x["module"] not in errmods]
+    sugs = remedy.suggest_all(judged)
     for x in f["findings"]:
         if x["module"] in errmods:
             held.append({"finding_id": x["id"], "module": x["module"], "reason": "module_unconfirmed"})
             continue
         lv = level_effective(x)
         days = pol["deadlines"].get(lv)
-        info_default = lv == "INFO"  # 引き上げ後の重大度で判断する（INFO → CRITICAL を自動 defer しない）
+        sug = sugs.get(x["id"], [])
+        # 引き上げ後の重大度で判断する（INFO → CRITICAL を自動 defer しない）。INFO でも、同じ対象を他の finding の
+        # 自動修復が隔離する場合は自動 defer しない（隔離で消えるため、判断者が group に入れるか決める）
+        info_default = lv == "INFO" and not any(s_["label"] == "auto" for s_ in sug)
+        if lv == "INFO" and days is None and not info_default:
+            days = pol["deadlines"].get("LOW")
         items.append({
             "finding_id": x["id"],
             "decision": "defer" if info_default else None,
@@ -183,18 +261,23 @@ def draft(inp: dict, now: dt.datetime, operator: str, plan_id: str | None = None
             "action": None,
             "constraints": {
                 "allowed_decisions": list(allowed_decisions(x)),
-                # 選べる判断のうち最も厳しいもの（exception は 1 名、diff_anomaly・危険な効果の remediate は 2 名）
-                "min_approvers": max(min_approvers(x, d) for d in allowed_decisions(x)),
+                # 選べる判断のうち最も厳しいもの（exception は 1 名、diff_anomaly・危険な効果・root が必要な対象の remediate は 2 名）
+                "min_approvers": max([min_approvers(x, d) for d in allowed_decisions(x)]
+                                     + [min_approvers(x, "remediate", s_["action"]) for s_ in sug]),
+                **({"suggested_actions": sug} if sug else {}),
             },
         })
     out = {
-        "schema_version": "1.0",
+        "schema_version": PLAN_SCHEMA_VERSION,
         "plan_id": plan_id or str(uuid.uuid4()),
         "created_at": fmt_ts(now),
         "status": "draft",
         "items": items,
         "held": held,
     }
+    sc = scope_of(inp)
+    if sc is not None:
+        out["scope"] = sc
     if now_override:  # created_at が --now 由来であることを finalize と GER に伝える
         out["now_override"] = True
     return out
@@ -272,15 +355,44 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
     if plan["status"] == "error":
         v.append(Violation("I-12", "status: error の plan は作成しません"))
 
-    # I-4: 同じ対象への操作が 2 件あると GER は計画全体を拒否する（実行順で結果が変わる）
-    targets: dict[str, str] = {}
+    # I-4: 同じ対象への操作が 2 件あると GER は計画全体を拒否する（実行順で結果が変わる）。
+    # 同じファイルへの複数の finding は action.group でまとめる（type・target が一致すること。GER は書き込みを 1 回にする）
+    targets: dict[str, tuple[str, str | None]] = {}
+    groups: dict[str, tuple[str, str | None]] = {}
     for it in plan["items"]:
         a = it["action"]
-        if it["decision"] == "remediate" and isinstance(a, dict):
-            if a["target"] in targets:
-                v.append(Violation("I-4", f"action.target が {targets[a['target']]} と重複しています", it["finding_id"]))
-            else:
-                targets[a["target"]] = it["finding_id"]
+        if it["decision"] != "remediate" or not isinstance(a, dict):
+            continue
+        g = a.get("group")
+        if g is not None:
+            if g in groups and groups[g] != (a["type"], a["target"]):
+                v.append(Violation("I-4", f"group {g} の action は type と target を一致させること", it["finding_id"]))
+            groups.setdefault(g, (a["type"], a["target"]))
+        if a["type"] not in FS_CHANGING:
+            continue
+        if a["target"] in targets:
+            first, g0 = targets[a["target"]]
+            if g is None or g != g0:
+                v.append(Violation("I-4", f"action.target が {first} と重複しています（同じ対象は action.group でまとめること）", it["finding_id"]))
+        else:
+            targets[a["target"]] = (it["finding_id"], g)
+    # I-4: ファイルを変える操作の対象は、承認する検査範囲（plan.scope）の下にあること
+    fs_actions = [it for it in plan["items"] if it["decision"] == "remediate" and isinstance(it["action"], dict)
+                  and it["action"]["type"] in FS_CHANGING]
+    want_scope = scope_of(inp)
+    if "scope" in plan and plan["scope"] != want_scope:
+        v.append(Violation("I-4", "plan.scope は入力（findings の scan_roots、または policy.scope）から導いた値と一致させること"))
+    if fs_actions and plan["schema_version"] == PLAN_SCHEMA_VERSION:
+        # chmod（従来の操作）は検査範囲が無くても可。範囲があれば chmod の対象もその下にあること
+        if want_scope is None and any(it["action"]["type"] != "chmod" for it in fs_actions):
+            v.append(Violation("I-4", "ファイルを変える操作には検査範囲が必要です（triage-input の policy.scope、または findings 1.1 の scan_roots）"))
+        elif want_scope is not None:
+            places = want_scope["roots"] + ([want_scope["home"]] if want_scope.get("home") else [])
+            for it in fs_actions:
+                t = it["action"]["target"]
+                if t is not None and not any(_under(t, r) for r in places):
+                    v.append(Violation("I-4", "action.target が検査範囲（plan.scope）の外にあります", it["finding_id"]))
+    sugs = remedy.suggest_all([x for x in f["findings"] if x["module"] not in errmods])
 
     for it in plan["items"]:
         fid = it["finding_id"]
@@ -305,7 +417,7 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
         unknown = [a for a in appr if a not in approvers]
         if unknown:
             v.append(Violation("I-8", f"policy.approvers に無い承認者: {', '.join(unknown)}", fid))
-        need = min_approvers(x, d)
+        need = min_approvers(x, d, it["action"])
         if len(appr) < need:
             code = "I-6" if x.get("skillpact") and (x["skillpact"]["diff_anomaly"] or need == 2) else "I-3"
             v.append(Violation(code, f"承認者が {need} 名以上必要です（現在 {len(appr)} 名）", fid))
@@ -343,11 +455,18 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
         elif final and x.get("skillpact"):
             v.append(Violation("I-5", "確定 plan の item には finding の skillpact の要約（skillpact）が必要です", fid))
         if a is not None:
-            v += _action_shape_violations(a, fid, x)
+            v += _action_shape_violations(a, fid, x, sugs.get(fid), final)
             if "evidence_hash" in a and a["evidence_hash"] != x["evidence_hash"]:
                 v.append(Violation("I-4", "action.evidence_hash は finding の evidence_hash と一致させること", fid))
-            if final and "evidence_hash" not in a:
+            if "evidence" in a and a["evidence"] != evidence_of(x):
+                v.append(Violation("I-4", "action.evidence は finding の evidence（1.0 では evidence_hash）と一致させること", fid))
+            v11 = plan["schema_version"] == PLAN_SCHEMA_VERSION
+            if final and v11 and ("evidence" not in a or "relation" not in a or "finding_path" not in a):
+                v.append(Violation("I-4", "確定 plan の action には evidence・relation・finding_path が必要です", fid))
+            if final and not v11 and "evidence_hash" not in a:
                 v.append(Violation("I-4", "確定 plan の action には evidence_hash が必要です", fid))
+            if not v11 and a["type"] != "chmod":
+                v.append(Violation("I-4", f"plan 1.0 では chmod 以外の操作を使えません（plan {PLAN_SCHEMA_VERSION} にすること）", fid))
             rev = REVERSIBLE_BY_TYPE.get(a["type"], False)
             if "reversible" in a and a["reversible"] != rev:
                 v.append(Violation("I-4", f"action.reversible は操作種別 {a['type']} から {rev} と決まります", fid))
@@ -380,6 +499,8 @@ def _deadline_violations(it: dict, d: str, lv: str, pol: dict, created: dt.datet
     if dec > now:
         v.append(Violation("I-9", "decided_at が現在時刻より後です", fid))
     days = pol["deadlines"].get(lv)
+    if days is None and lv == "INFO":  # 隔離の group に入れた INFO（同じ対象の他の finding と一緒に直す）は LOW の期限
+        days = pol["deadlines"].get("LOW")
     if it["due_at"]:
         due = parse_ts(it["due_at"])
         if days is None:
@@ -409,23 +530,30 @@ def finalize(inp: dict, plan: dict, now: dt.datetime | None = None, now_override
         it = {k: val for k, val in it.items() if k not in ("constraints", "skillpact")}
         x = by_id[it["finding_id"]]
         if it["action"] is not None:
-            a = dict(it["action"])
+            a = copy.deepcopy(it["action"])
             a["reversible"] = REVERSIBLE_BY_TYPE.get(a["type"], False)
             a["skillpact_effects"] = skillpact_effects(x)
-            a["evidence_hash"] = x["evidence_hash"]  # GER が G-7 で検知時から対象が変わっていないことを確かめる
+            # GER が G-7 で検知時から対象が変わっていないことを確かめる。G-9 で finding_path から関係を導き直す
+            a.setdefault("relation", "none" if a["target"] is None else "self")
+            a["finding_path"] = x["path"]
+            a["evidence"] = evidence_of(x)
+            a.pop("evidence_hash", None)
             it["action"] = a
         sp = skillpact_summary(x)
         if sp is not None:
             it["skillpact"] = sp
         out_items.append(it)
     final = {
-        "schema_version": "1.0",
+        "schema_version": PLAN_SCHEMA_VERSION,
         "plan_id": plan["plan_id"],
         "created_at": plan["created_at"],
         "status": "partial" if inp["findings"]["status"] == "partial" else "ok",
         "items": out_items,
         "held": plan["held"],
     }
+    sc = scope_of(inp)
+    if sc is not None:
+        final["scope"] = sc
     if now_override or plan.get("now_override"):  # draft か finalize のどちらかで時刻を上書きした
         final["now_override"] = True
     final["plan_hash"] = plan_hash(final)
