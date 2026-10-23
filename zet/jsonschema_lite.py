@@ -41,12 +41,13 @@ def safe_text(s: Any) -> str:
     """入力に由来する文字列を端末に安全に表示できる形にする（制御文字を \\xNN / \\uNNNN にする）。
 
     エラーメッセージにキー名・パスなどの入力値を含めるとき、ESC（OSC / CSI）や C1 制御文字で
-    端末のタイトル変更・画面消去などを起こさせないため。バックスラッシュ自体もエスケープして可逆にする。
+    端末のタイトル変更・画面消去などを起こさせないため。結果は制御文字を含まないので、何度適用しても
+    変わらない（検証器と CLI の両方で適用しても二重にエスケープしない）。バックスラッシュはそのまま残す。
     """
     def esc(m: re.Match) -> str:
         c = ord(m.group())
         return f"\\x{c:02x}" if c < 0x100 else f"\\u{c:04x}"
-    return _UNSAFE.sub(esc, str(s).replace("\\", "\\\\"))
+    return _UNSAFE.sub(esc, str(s))
 
 
 def _ptr(path: list) -> str:

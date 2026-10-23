@@ -945,7 +945,8 @@ class TestRegressionsR3Fixes(unittest.TestCase):
     # F8: 入力由来の文字列（キー名など）に含まれる ESC・C1 制御文字をそのまま端末に出さない
     def test_f8_control_characters_escaped_in_messages(self):
         from zet.jsonschema_lite import safe_text
-        self.assertEqual(safe_text("a\x1b]0;X\x07\x9b‮b\\c"), "a\\x1b]0;X\\x07\\x9b\\u202eb\\\\c")
+        self.assertEqual(safe_text("a\x1b]0;X\x07\x9b\u202eb\\c"), "a\\x1b]0;X\\x07\\x9b\\u202eb\\c")
+        self.assertEqual(safe_text(safe_text("a\x1b")), "a\\x1b")  # 冪等（検証器と CLI の両方で適用しても二重にしない）
         bad = dict(self.inp); bad["x\x1b]0;PWNED\x07\x1b[2J\x9b"] = 1
         (self.d / "bad.json").write_text(json.dumps(bad), encoding="utf-8")
         code, _, err = self.run_cli("validate", str(self.d / "bad.json"), "--operator", "alice")
@@ -953,7 +954,7 @@ class TestRegressionsR3Fixes(unittest.TestCase):
         self.assertIn("unknown field", err)
         for c in ("\x1b", "\x07", "\x9b"):
             self.assertNotIn(c, err)
-        self.assertIn("\\x1b]0;PWNED", err)
+        self.assertIn("unknown field 'x\\x1b]0;PWNED\\x07\\x1b[2J\\x9b'", err)
 
     # F10: skillpact_effects は SkillPact 0.8 の 6 効果だけ。危険な効果を宣言したスキルの remediate は承認者 2 名（GER G-6 と同じ）
     def test_f10_effects_enum_and_risky_effects_need_two_approvers(self):
