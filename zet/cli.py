@@ -98,7 +98,29 @@ def _discard_stdout() -> None:
         pass
 
 
+def _harden_streams() -> None:
+    """UTF-8 でないロケールでも人向けのメッセージで UnicodeEncodeError を起こさない（符号化方式は変えない）。"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):  # StringIO などの差し替え先
+            pass
+
+
+def _write_stdout(text: str) -> None:
+    """機械可読な JSON はロケールにかかわらず UTF-8 のバイト列で書く（ensure_ascii=False のため）。"""
+    buf = getattr(sys.stdout, "buffer", None)
+    if buf is None:  # テストなどで文字列ストリームに差し替えられている
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        return
+    sys.stdout.flush()
+    buf.write(text.encode("utf-8"))
+    buf.flush()
+
+
 def main(argv: list[str] | None = None) -> int:
+    _harden_streams()
     args = _parser().parse_args(argv)
     if not _PERSON.fullmatch(args.operator):
         print("zet: --operator の形式が不正です", file=sys.stderr)
@@ -179,8 +201,7 @@ def main(argv: list[str] | None = None) -> int:
             if out:
                 write_text_atomic(out, text)
             else:
-                sys.stdout.write(text)
-                sys.stdout.flush()
+                _write_stdout(text)
             written = True
         except OSError as e:
             print(f"zet: 出力を書き出せません（{e}）", file=sys.stderr)

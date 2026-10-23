@@ -799,6 +799,31 @@ class TestRegressionsR3(unittest.TestCase):
             with self.assertRaises(ContractError):
                 triage.finalize(self.inp, p)
 
+    # 4. UTF-8 でないロケール（ASCII）でも標準出力の JSON は UTF-8 のまま書き、例外にしない
+    def test_non_utf8_locale_stdout(self):
+        inp = make_input("findings-partial.json")  # errors[].module に非 ASCII 文字（§）を含む
+        (self.d / "partial.json").write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
+        (self.d / "bad.json").write_text("{}", encoding="utf-8")
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "ZET_LOG_DIR": str(self.d / "log"),
+               "LC_ALL": "C", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0"}
+        # bin/zet は python3 -I（C ロケールでは UTF-8 モードになる）ため、ロケールの影響を受ける形で直接起動する
+        cmd = ["python3", str(ROOT / "zet" / "__main__.py")]
+        probe = subprocess.run(cmd[:1] + ["-c", "import sys; print(sys.stdout.encoding)"], env=env,
+                               capture_output=True, text=True, timeout=60)
+        if probe.stdout.strip().lower() not in ("ascii", "ansi_x3.4-1968", "us-ascii"):
+            self.skipTest(f"ASCII ロケールを再現できません（{probe.stdout.strip()}）")
+        r = subprocess.run(cmd + ["draft", str(self.d / "partial.json"), "--operator", "alice"],
+                           env=env, capture_output=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr.decode("utf-8", "replace"))
+        self.assertNotIn(b"Traceback", r.stderr)
+        out = json.loads(r.stdout.decode("utf-8"))
+        self.assertIn("§", json.dumps(out["held"], ensure_ascii=False))
+        r = subprocess.run(cmd + ["validate", str(self.d / "bad.json"), "--operator", "alice"],
+                           env=env, capture_output=True, timeout=60)
+        self.assertEqual(r.returncode, 3)
+        self.assertNotIn(b"Traceback", r.stderr)
+        self.assertEqual([x["result"] for x in self.audit_records()], ["ok", "rejected"])
+
 
 def stat_is_fifo(p) -> bool:
     return stat.S_ISFIFO(os.lstat(p).st_mode)
