@@ -35,7 +35,7 @@ bin/zet finalize triage-input.json plan.draft.json --operator <name> -o remediat
 
 | decision | 必須 | 制限 |
 |---|---|---|
-| `remediate` | `owner`、`due_at`（判断日 + `deadlines[level_effective]` 日以内）、`action{type, target(絶対パス), params}` | — |
+| `remediate` | `owner`、`due_at`（判断日 + `deadlines[level_effective]` 日以内）、`action{type, target(正規化済みの絶対パス), params}`（chmod は `{"mode": "0NNN"}`） | — |
 | `exception` | `exception_type`（not_affected / fix_unavailable / risk_accepted）、`reason`、`recheck_at`（判断日 + `decision_window_days` 日以内）、判断者以外の `approved_by` 1 名以上 | `skillpact.divergence` が空でない finding は不可 |
 | `defer` | `level_effective` が INFO 以外なら `reason` と `recheck_at`（判断日 + `decision_window_days` 日以内） | — |
 

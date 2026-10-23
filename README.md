@@ -45,7 +45,7 @@ bin/zet finalize triage-input.json plan.draft.json --operator alice -o remediati
 | I-1 | 入力の全 finding が items か held にちょうど 1 回現れ、items の decision は記入済み |
 | I-2 | 入力に存在しない finding_id を使わない |
 | I-3 | exception は exception_type・reason・recheck_at と判断者以外の承認が必要（人名は大文字小文字を区別せず比較）。defer も level_effective が INFO 以外なら reason が必要。decided_by / decided_at は必須 |
-| I-4 | remediate は owner・due_at・action が必要。action.reversible / skillpact_effects は導出値と一致 |
+| I-4 | remediate は owner・due_at・action が必要。action.target は正規化済みの絶対パス（`.` `..` 連続した `/` を含まない）、chmod の params は `{"mode": "0NNN"}`（特殊ビット不可）のみ（GER の受理条件と同じ）。action.reversible / skillpact_effects は導出値と一致 |
 | I-5 | skillpact.divergence が空でない finding は exception にできない |
 | I-6 | skillpact.diff_anomaly の finding は承認者 2 名以上（重複・大文字小文字だけの違いは 1 名と数える） |
 | I-7 | L3 署名済みで乖離がある finding は level_effective = CRITICAL（引き下げ不可） |

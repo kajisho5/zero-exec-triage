@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import posixpath
+import re
 import uuid
 from typing import Any
 
@@ -9,6 +11,7 @@ from .core import (DECISIONS, REVERSIBLE_BY_TYPE, ContractError, Violation,
                    fmt_ts, parse_ts, plan_hash, schema_violations)
 
 MAX_DAYS = 3650  # triage-input.schema.json の deadlines / decision_window_days の最大値
+_CHMOD_MODE = re.compile(r"0[0-7]{3}")  # GER と同じ。特殊ビット（setuid など）は不可
 
 
 # --- 入力検証（zet validate） ----------------------------------------------
@@ -75,6 +78,19 @@ def min_approvers(finding: dict, decision: str | None) -> int:
 def skillpact_effects(finding: dict) -> list[str]:
     sp = finding.get("skillpact")
     return list(sp["declared_effects"]) if sp else []
+
+
+def _action_shape_violations(a: dict, fid: str) -> list[Violation]:
+    """GER が必ず拒否する action を確定させない（I-4）。GER の受理条件と同じ判定。"""
+    v: list[Violation] = []
+    t = a["target"]
+    if not t.startswith("/") or posixpath.normpath(t) != t or ".." in t.split("/"):
+        v.append(Violation("I-4", "action.target は正規化された絶対パスにすること（. / .. / 連続した / を含まない）", fid))
+    if a["type"] == "chmod":
+        p = a["params"]
+        if set(p) != {"mode"} or not isinstance(p["mode"], str) or not _CHMOD_MODE.fullmatch(p["mode"]):
+            v.append(Violation("I-4", 'chmod の params は {"mode": "0NNN"}（8 進 3 桁、特殊ビットなし）だけにすること', fid))
+    return v
 
 
 def _timestamp_violations(plan: dict) -> list[Violation]:
@@ -268,6 +284,7 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
             v.append(Violation("I-4", "remediate 以外で action が設定されています", fid))
         a = it["action"]
         if a is not None:
+            v += _action_shape_violations(a, fid)
             rev = REVERSIBLE_BY_TYPE.get(a["type"], False)
             if "reversible" in a and a["reversible"] != rev:
                 v.append(Violation("I-4", f"action.reversible は操作種別 {a['type']} から {rev} と決まります", fid))

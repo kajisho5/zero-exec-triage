@@ -586,6 +586,23 @@ class TestRegressionsR2(unittest.TestCase):
         info.update(reason=None, recheck_at=None)
         self.assertEqual(triage.check(inp, plan), [])
 
+    # 8. GER が必ず拒否する action（正規化されていない target、chmod の不正な params）は確定させない
+    def test_action_shape_matches_ger(self):
+        it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
+        for target in ("/a/./b", "/a//b", "/a/../b", "/a/b/", "/..", "/a/."):
+            p = copy.deepcopy(self.plan)
+            next(i for i in p["items"] if i["finding_id"] == it["finding_id"])["action"]["target"] = target
+            self.assertIn("I-4", codes(triage.check(self.inp, p)), target)
+            with self.assertRaises(ContractError):
+                triage.finalize(self.inp, p)
+        for params in ({"mode": "644"}, {"mode": "04755"}, {"mode": "0644\n"}, {"mode": 420}, {"mode": "0644", "x": 1}, {}):
+            p = copy.deepcopy(self.plan)
+            next(i for i in p["items"] if i["finding_id"] == it["finding_id"])["action"]["params"] = params
+            self.assertIn("I-4", codes(triage.check(self.inp, p)), params)
+        it["action"].update(target="/srv/app/config.yml", params={"mode": "0644"})
+        self.assertEqual(triage.check(self.inp, self.plan), [])
+        triage.finalize(self.inp, self.plan)
+
 
 if __name__ == "__main__":
     unittest.main()
