@@ -1,1 +1,1 @@
-"""ZET — Zero-Exec Triage（判断層）。何も実行しない。"""
+"""ZET — Zero-Exec Triage (decision layer). Executes nothing."""

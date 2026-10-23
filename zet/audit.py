@@ -1,10 +1,10 @@
-"""追記専用の監査ログ（JSONL、ハッシュチェーン付き）。
+"""Append-only audit log (JSONL with a hash chain).
 
-各レコードの prev_hash は直前の行（改行を除くバイト列）の SHA-256。最初の行は null。
-ZES・GER とは別ファイル・別リテンションで運用する。
-追記の前に末尾の連結（最終行が JSON object で、その prev_hash が直前の行と一致し、改行で終わること）を
-確かめ、壊れていれば追記しない（壊れたチェーンの後ろに正しい記録を足して破損を目立たなくしない）。
-全体の検証は zet verify-log（verify_chain）で行う。
+The prev_hash of each record is the SHA-256 of the previous line (its bytes without the newline); null for the first line.
+It is a separate file from the ZES and GER logs, with its own retention.
+Before appending, the link at the end is checked (the last line is a JSON object, its prev_hash matches the line
+before it, and the file ends with a newline). When it is broken nothing is appended (valid records after a broken
+chain would make the damage less visible). The whole chain is verified with zet verify-log (verify_chain).
 """
 from __future__ import annotations
 
@@ -31,36 +31,36 @@ def log_path() -> Path:
 
 
 class BrokenChain(OSError):
-    """監査ログのハッシュチェーンが末尾で壊れているため追記しない。"""
+    """The hash chain of the audit log is broken at the end, so nothing is appended."""
 
 
 def ensure_writable() -> None:
-    """記録できない操作はしない。ディレクトリ作成と書き込み可否を事前に確かめる。"""
+    """Do nothing that cannot be recorded. Create the directory and check that it is writable first."""
     d = log_dir()
     d.mkdir(mode=0o700, parents=True, exist_ok=True)
     st = os.stat(d)
-    # 他人が書けるディレクトリではログの差し替え・削除を防げない（既存ディレクトリも検査する）
+    # in a directory that others can write, the log can be replaced or deleted (existing directories are checked too)
     if st.st_uid != os.geteuid():
-        raise PermissionError(f"監査ログのディレクトリの所有者が実行ユーザーではありません: {d}")
+        raise PermissionError(f"the audit log directory is not owned by the current user: {d}")
     if st.st_mode & 0o022:
-        raise PermissionError(f"監査ログのディレクトリがグループ・他者から書き込み可能です: {d}")
+        raise PermissionError(f"the audit log directory is writable by group or others: {d}")
     if not os.access(d, os.W_OK):
-        raise PermissionError(f"監査ログに書き込めません: {d}")
+        raise PermissionError(f"cannot write the audit log: {d}")
     p = log_path()
-    try:  # 何かする前に、記録を足せないログを検出する（追記時にもロックの下で再確認する）
+    try:  # detect a log that cannot take a record before doing anything (checked again under the lock when appending)
         fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
         return
     except OSError as e:
-        raise PermissionError(f"監査ログを開けません（シンボリックリンクなど）: {p}（{e.strerror}）") from None
+        raise PermissionError(f"cannot open the audit log (symbolic link or similar): {p} ({e.strerror})") from None
     with os.fdopen(fd, "rb") as f:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise PermissionError(f"監査ログが通常ファイルではありません: {p}")
+            raise PermissionError(f"the audit log is not a regular file: {p}")
         _check_tail(f)
 
 
 def _last_lines(f, n: int = 2) -> tuple[list[bytes], bool]:
-    """末尾の n 行（古い順）と、ファイルが改行で終わっているか。ファイル全体は読まない。"""
+    """The last n lines (oldest first) and whether the file ends with a newline. Does not read the whole file."""
     f.seek(0, os.SEEK_END)
     end = f.tell()
     if end == 0:
@@ -92,7 +92,7 @@ def _link(prev: bytes | None) -> str | None:
 
 
 def _check_tail(f) -> bytes | None:
-    """末尾の連結を確かめて最終行を返す（空なら None）。壊れていれば BrokenChain。"""
+    """Check the link at the end and return the last line (None when empty). BrokenChain when it is broken."""
     lines, ends_nl = _last_lines(f, 2)
     if not lines:
         return None
@@ -100,27 +100,27 @@ def _check_tail(f) -> bytes | None:
     rec = _parse(last)
     prev = lines[-2] if len(lines) == 2 else None
     if not ends_nl:
-        why = "最終行が改行で終わっていません（書き込みが途中で切れた可能性）"
+        why = "the last line does not end with a newline (a write may have been cut off)"
     elif rec is None:
-        why = "最終行が JSON object ではありません"
+        why = "the last line is not a JSON object"
     elif rec.get("prev_hash") != _link(prev):
-        why = "最終行の prev_hash が直前の行と一致しません"
+        why = "prev_hash of the last line does not match the line before it"
     else:
         return last
-    raise BrokenChain(f"監査ログのハッシュチェーンが末尾で壊れているため追記しません（{why}）。"
-                      f"zet verify-log で確認し、ログを退避してから実行してください: {log_path()}")
+    raise BrokenChain(f"the hash chain of the audit log is broken at the end, so nothing is appended ({why}). "
+                      f"Check it with zet verify-log and move the log aside before running again: {log_path()}")
 
 
 def append(record: dict) -> dict:
-    """排他ロックの下で直前行のハッシュを付けて追記する。既存行は変更しない。"""
+    """Append under an exclusive lock with the hash of the previous line. Existing lines are never changed."""
     ensure_writable()
     p = log_path()
-    # O_NOFOLLOW: シンボリックリンクにされたログには書かない（fail-closed）
+    # O_NOFOLLOW: never write to a log that was replaced by a symbolic link (fail-closed)
     fd = os.open(p, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "r+b") as f:
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
         try:
-            last = _check_tail(f)  # ロックの下で再確認（壊れた末尾・途中で切れた行の後ろには追記しない）
+            last = _check_tail(f)  # check again under the lock (never append after a broken end or a line that was cut off)
             rec = {"skill": "zet", "version": VERSION, **record, "prev_hash": _link(last)}
             line = json.dumps(rec, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
             f.seek(0, os.SEEK_END)
@@ -133,12 +133,12 @@ def append(record: dict) -> dict:
 
 
 def verify_chain(path: Path | None = None) -> list[str]:
-    """チェーンの破損箇所を返す（空なら健全）。"""
+    """Return the places where the chain is broken (empty when it is intact)."""
     return scan_chain(path)[1]
 
 
 def scan_chain(path: Path | None = None) -> tuple[int, list[str]]:
-    """(レコード数, 破損箇所の一覧)。一覧が空なら健全。ファイルが無ければ (0, [])。"""
+    """(number of records, list of broken places). The chain is intact when the list is empty. (0, []) when there is no file."""
     p = path or log_path()
     if not p.exists():
         return 0, []
@@ -149,18 +149,18 @@ def scan_chain(path: Path | None = None) -> tuple[int, list[str]]:
         for n, raw in enumerate(f, 1):
             line = raw.rstrip(b"\n")
             if not raw.endswith(b"\n"):
-                problems.append(f"line {n}: 改行で終わっていません（書き込みが途中で切れた可能性）")
+                problems.append(f"line {n}: does not end with a newline (a write may have been cut off)")
             try:
                 rec = json.loads(line)
             except (json.JSONDecodeError, UnicodeDecodeError, RecursionError):
-                problems.append(f"line {n}: JSON ではありません")
+                problems.append(f"line {n}: not JSON")
                 prev = line
                 continue
-            if not isinstance(rec, dict):  # 配列・文字列などの行も報告する（例外にしない）
-                problems.append(f"line {n}: JSON object ではありません")
+            if not isinstance(rec, dict):  # lines with an array, a string and so on are reported too (no exception)
+                problems.append(f"line {n}: not a JSON object")
                 prev = line
                 continue
             if rec.get("prev_hash") != _link(prev):
-                problems.append(f"line {n}: prev_hash 不一致")
+                problems.append(f"line {n}: prev_hash mismatch")
             prev = line
     return n, problems

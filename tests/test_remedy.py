@@ -1,13 +1,16 @@
-"""ZET 0.2: finding → 修復の対応表（draft の提案）、group、必須の後続作業（I-13）、関係（I-4）、plan 1.1、findings 1.1。"""
+"""ZET 0.2: finding → remediation mapping (draft suggestions), group, required follow-up work (I-13), relations (I-4), plan 1.1, findings 1.1."""
 from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import os
+import re
 import unittest
 
 from zet import remedy, triage
 from zet.core import ContractError, parse_ts, plan_hash
+from zet.legacy_templates import PATH_NONE_JA, TEMPLATES_JA
 
 NOW = parse_ts("2026-10-22T10:00:00Z")
 R = "/w/repo"
@@ -49,7 +52,7 @@ SHA = "sha256:" + "a" * 64
 
 
 def preview_params(a):
-    """ger preview が埋める params の代わり（形だけ actions.schema.json に合わせる）。"""
+    """Stands in for the params that ger preview fills in (only the shape follows actions.schema.json)."""
     t = a["type"]
     if t == "quarantine":
         if a["relation"] in ("self",) and not a["target"].endswith(("net-tool", "/abcd")):
@@ -96,7 +99,7 @@ class TestSuggestions(unittest.TestCase):
         return next((s["action"] for s in sug if s["label"] == label), None)
 
     def test_map(self):
-        cases = [  # (finding, 期待する auto（type, relation, target）or None, followup templates, checklist template)
+        cases = [  # (finding, expected auto (type, relation, target) or None, followup templates, checklist template)
             (F("§17", "HIGH", R + "/.mcp.json", "mcp-poisoning"), ("disable_mcp_server", "self", R + "/.mcp.json"), {"CL-MCP", "CL-IR"}, "CL-MCP"),
             (F("§17", "MEDIUM", R + "/.mcp.json", "mcp-poisoning"), None, set(), "CL-MCP-PIN"),
             (F("§17", "HIGH", R + "/x/.codex/config.toml", "mcp-poisoning"), ("disable_mcp_server", "self", R + "/x/.codex/config.toml"), {"CL-MCP", "CL-IR"}, "CL-MCP"),  # noqa: E501
@@ -142,7 +145,7 @@ class TestSuggestions(unittest.TestCase):
                     self.assertEqual(c["relation"], "self" if x["path"] else "none")
 
     def test_never_suggests_lockfile_edits_or_secret_rotation(self):
-        # ロックファイルの書き換え・秘密情報の失効は、どの段階でも自動化しない（チェックリストだけ）
+        # rewriting lockfiles and revoking secrets are never automated at any stage (checklist only)
         for x in (F("§15", "CRITICAL", R + "/yarn.lock", "chaindrop-keyv"), F("§47", "HIGH", R + "/.env"),
                   F("§45", "MEDIUM", H + "/.npmrc"), F("§22", "CRITICAL", R + "/.github/workflows/r.yml")):
             sug, _ = remedy.classify(x)
@@ -176,10 +179,10 @@ class TestDraftGroupsAndFinalize(unittest.TestCase):
         def g(i):
             return self.item(d, i)["constraints"]["suggested_actions"][0]["action"].get("group")
         self.assertIsNotNone(g(0))
-        self.assertEqual(g(0), g(1))  # 同じ package.json の §2 と §15
-        self.assertEqual(g(2), g(3))  # §30 の plist と同じファイルの §10 INFO
-        self.assertIsNone(self.item(d, 3)["decision"])  # 隔離で消える INFO は自動 defer しない
-        self.assertEqual(self.item(d, 8)["decision"], "defer")  # それ以外の INFO は従来どおり
+        self.assertEqual(g(0), g(1))  # §2 and §15 on the same package.json
+        self.assertEqual(g(2), g(3))  # the §30 plist and a §10 INFO on the same file
+        self.assertIsNone(self.item(d, 3)["decision"])  # an INFO that the quarantine clears is not deferred automatically
+        self.assertEqual(self.item(d, 8)["decision"], "defer")  # other INFO findings as before
         a5 = self.item(d, 5)["constraints"]["suggested_actions"][0]["action"]
         self.assertEqual((a5["type"], a5["relation"], a5["target"], a5.get("group")), ("quarantine", "skill_dir", R + "/s/v08", g(4)))
 
@@ -196,7 +199,7 @@ class TestDraftGroupsAndFinalize(unittest.TestCase):
                 self.assertNotIn("evidence_hash", a)
         cron = self.item(final, 7)["action"]
         self.assertEqual((cron["type"], cron["target"], cron["relation"]), ("checklist", None, "none"))
-        self.assertEqual(self.item(final, 4)["action"]["evidence"]["kind"], "detail")  # ディレクトリは detail のハッシュ
+        self.assertEqual(self.item(final, 4)["action"]["evidence"]["kind"], "detail")  # a directory has the hash of detail
         self.assertEqual(triage.check(self.inp, final, final=True, now=NOW), [])
 
         def bad(mut, code, text=None):
@@ -207,18 +210,18 @@ class TestDraftGroupsAndFinalize(unittest.TestCase):
             if text:
                 self.assertTrue(any(text in x.message for x in v), v)
 
-        # I-13: 必須の後続作業を外す・雛形の手順を書き換える
+        # I-13: remove required follow-up work, rewrite template steps
         bad(lambda q: self.item(q, 2)["action"].pop("followup"), "I-13", "CL-LAUNCHD")
-        bad(lambda q: self.item(q, 2)["action"]["followup"][0]["steps"][0].update(text="何もしない"), "I-13")
+        bad(lambda q: self.item(q, 2)["action"]["followup"][0]["steps"][0].update(text="Do nothing"), "I-13")
         bad(lambda q: self.item(q, 6)["action"]["params"]["steps"].pop(0), "I-13")
-        # I-4: 関係・target・group・範囲
+        # I-4: relation, target, group, scope
         bad(lambda q: self.item(q, 4)["action"].update(target=R + "/s"), "I-4", "skill_dir")
-        bad(lambda q: self.item(q, 0)["action"].update(target=None, relation="none"), "I-4", "checklist だけ")
+        bad(lambda q: self.item(q, 0)["action"].update(target=None, relation="none"), "I-4", "only a checklist")
         bad(lambda q: self.item(q, 0)["action"].pop("group"), "I-4", "group")
         bad(lambda q: self.item(q, 1)["action"].update(type="quarantine"), "I-4", "group")
         bad(lambda q: q.update(scope={"roots": ["/"], "home": None}), "I-4", "scope")
         bad(lambda q: self.item(q, 0)["action"].update(finding_path="/etc/passwd"), "I-4", "finding_path")
-        # draft の params（select）は check を通るが、確定 plan では GER の actions.schema.json に合わないと I-4
+        # draft params (select) pass check, but in a finalized plan params that do not fit GER's actions.schema.json are I-4
         q = copy.deepcopy(p)
         self.item(q, 0)["action"]["params"] = {"select": "npm.lifecycle"}
         self.item(q, 1)["action"]["params"] = {"select": "npm.lifecycle"}
@@ -254,20 +257,20 @@ class TestFindings11Draft(unittest.TestCase):
         self.assertEqual(triage.validate_input(inp), [])
         d = triage.draft(inp, NOW, "alice")
         self.assertEqual(d["scope"], {"roots": [R], "home": None})
-        # ロックファイルの finding は related npm_installed があっても auto にしない（§9.6。再生成まで残る）
+        # a lockfile finding gets no auto even with related npm_installed (§9.6; it stays until the lockfile is regenerated)
         a = d["items"][0]["constraints"]["suggested_actions"][0]["action"]
         self.assertEqual((a["type"], a["relation"], a["target"], a["params"]["template"]),
                          ("checklist", "self", R + "/package-lock.json", "CL-LOCKFILE"))
         p = adopt(d)
         final = triage.finalize(inp, p, now=NOW)
         self.assertEqual(final["items"][0]["action"]["evidence"], {"kind": "file", "hash": SHA})
-        # I-13: kind ごとに許す操作
+        # I-13: operations allowed per kind
         q = copy.deepcopy(p)
         q["items"][1]["action"]["type"] = "remove_line"
         q["items"][1]["action"]["params"] = preview_params(q["items"][1]["action"])
         q["items"][1]["action"].pop("followup", None)
         self.assertIn("I-13", codes(triage.check(inp, q, now=NOW)))
-        # 1.0 の findings に 1.1 の項目があれば拒否（strict）
+        # findings 1.0 with 1.1 fields are rejected (strict)
         inp10 = make_input([dict(mcp)])
         self.assertIn("I-11", codes(triage.validate_input(inp10)))
 
@@ -300,9 +303,9 @@ class TestFindings11Draft(unittest.TestCase):
 
 
 class TestLockfileFindingStaysOpen(unittest.TestCase):
-    """ロックファイルの finding（pkg.lockfile_compromised、または §15 のロックファイル）は、インストール済みの実体の隔離では
-    消えない（ZES はロックファイルの中身を見て再び報告する）。隔離は node_modules/<name>/package.json の finding の auto で行い、
-    ロックファイルの finding は再生成の手順を含む checklist（CL-LOCKFILE）として作業者が完了にするまで残す（§9.6・I-13）。"""
+    """A lockfile finding (pkg.lockfile_compromised, or a §15 lockfile) is not cleared by quarantining the installed copy
+    (ZES reports it again from the contents of the lockfile). The quarantine is the auto of the node_modules/<name>/package.json
+    finding; the lockfile finding stays as a checklist with the regeneration steps (CL-LOCKFILE) until the operator completes it (§9.6, I-13)."""
 
     def setUp(self):
         subj = {"ecosystem": "npm", "package": "keyv", "version": "6.0.0", "safe_version": "5.x", "fixed_versions": []}
@@ -324,10 +327,10 @@ class TestLockfileFindingStaysOpen(unittest.TestCase):
         regen = [s for s in steps if "npm uninstall keyv" in s["text"]]
         self.assertEqual(len(regen), 1)
         self.assertTrue(regen[0]["blocking"])
-        self.assertNotIn("verify", ls[0]["action"]["params"])  # GER が自動で完了にしない（作業者の ger confirm だけ）
+        self.assertNotIn("verify", ls[0]["action"]["params"])  # GER never completes it by itself (only the operator's ger confirm)
         ia = next(s for s in self.sug(self.draft, self.inst) if s["label"] == "auto")["action"]
         self.assertEqual((ia["type"], ia["relation"], ia["target"]), ("quarantine", "npm_pkg_dir", R + "/node_modules/keyv"))
-        self.assertNotIn("group", ia)  # ロックファイルの finding を同じ group に入れない
+        self.assertNotIn("group", ia)  # the lockfile finding is not put in the same group
         final = triage.finalize(self.inp, adopt(self.draft), now=NOW)
         types = {it["finding_id"]: it["action"]["type"] for it in final["items"]}
         self.assertEqual(types, {self.lock["id"]: "checklist", self.inst["id"]: "quarantine"})
@@ -347,8 +350,8 @@ class TestLockfileFindingStaysOpen(unittest.TestCase):
                         "followup": [remedy.checklist(t, self.lock["path"]) for t in ("CL-PKG", "CL-SECRET")]}
         v = triage.check(self.inp, q, now=NOW)
         self.assertIn("I-13", codes(v), v)
-        self.assertTrue(any("ロックファイル" in x.message for x in v), v)
-        # findings 1.0（kind なし）でも §15 のロックファイルなら同じ
+        self.assertTrue(any("lockfile" in x.message for x in v), v)
+        # the same with findings 1.0 (no kind) for a §15 lockfile
         lock10 = {k: v for k, v in self.lock.items() if k not in ("kind", "subject", "related", "evidence")}
         inst10 = {k: v for k, v in self.inst.items() if k not in ("kind", "subject", "evidence")}
         inp10 = make_input([lock10, inst10])
@@ -357,17 +360,77 @@ class TestLockfileFindingStaysOpen(unittest.TestCase):
         qa10 = next(i for i in q10["items"] if i["finding_id"] == lock10["id"])
         qa10["action"] = copy.deepcopy(qa["action"])
         self.assertIn("I-13", codes(triage.check(inp10, q10, now=NOW)))
-        # checklist でも再生成の手順（CL-LOCKFILE）を含まない雛形は不可
+        # a checklist whose template lacks the regeneration steps (CL-LOCKFILE) is not allowed either
         q = copy.deepcopy(p)
         qa = next(i for i in q["items"] if i["finding_id"] == self.lock["id"])
         qa["action"]["params"] = remedy.checklist("CL-REVIEW", self.lock["path"])
         self.assertIn("I-13", codes(triage.check(self.inp, q, now=NOW)))
-        # 再生成の手順を書き換える・外すのも不可
+        # rewriting or removing the regeneration steps is not allowed either
         q = copy.deepcopy(p)
         qa = next(i for i in q["items"] if i["finding_id"] == self.lock["id"])
         qa["action"]["params"]["steps"] = [s for s in qa["action"]["params"]["steps"] if "npm uninstall" not in s["text"]]
         self.assertIn("I-13", codes(triage.check(self.inp, q, now=NOW)))
         self.assertEqual(it["action"]["type"], "checklist")
+
+
+class TestLegacyJapaneseTemplates(unittest.TestCase):
+    """Drafts and plans made by ZET before the English-first release carry the Japanese step texts. I-13 still
+    accepts them word for word (legacy_templates), so an old draft can be finalized and an old plan checked."""
+
+    def setUp(self):
+        self.fs = [
+            F("§30", "HIGH", H + "/Library/LaunchAgents/com.evil.plist", "chaindrop-keyv"),
+            F("§3", "HIGH", None, detail="runtime"),
+            F("§15", "CRITICAL", R + "/package-lock.json", "chaindrop-keyv"),
+        ]
+        self.inp = make_input(self.fs)
+        self.plan = adopt(triage.draft(self.inp, NOW, "alice", plan_id="11111111-2222-4333-8444-555555555555"))
+
+    def to_japanese(self, plan):
+        q = copy.deepcopy(plan)
+        for it in q["items"]:
+            a = it["action"]
+            if not a:
+                continue
+            x = next(f for f in self.fs if f["id"] == it["finding_id"])
+            for cl in ([a["params"]] if a["type"] == "checklist" else []) + a.get("followup", []):
+                cl["steps"] = remedy._steps(TEMPLATES_JA, cl["template"], x["path"], remedy.pkg_of(x), PATH_NONE_JA)
+        return q
+
+    def test_tables_have_the_same_steps(self):
+        self.assertEqual(set(TEMPLATES_JA), remedy.TEMPLATES)
+        for k in remedy.TEMPLATES:
+            self.assertEqual([b for _, b in TEMPLATES_JA[k]], [b for _, b in remedy._T[k]], k)
+            for (en, _), (ja, _) in zip(remedy._T[k], TEMPLATES_JA[k]):
+                self.assertEqual(("{path}" in en, "{pkg}" in en), ("{path}" in ja, "{pkg}" in ja), k)
+
+    def test_new_drafts_are_english(self):
+        texts = [s["text"] for it in self.plan["items"] if it["action"]
+                 for cl in ([it["action"]["params"]] if it["action"]["type"] == "checklist" else []) + it["action"].get("followup", [])
+                 for s in cl["steps"]]
+        self.assertTrue(texts)
+        self.assertFalse([t for t in texts if re.search("[\u3000-\u30ff\u4e00-\u9fff\uff00-\uffef]", t)])
+        every = [t for k in remedy.TEMPLATES for t, _ in remedy._T[k]]
+        self.assertFalse([t for t in every if re.search("[\u3000-\u30ff\u4e00-\u9fff\uff00-\uffef]", t)])
+        self.assertIn("Target: (no path)", " ".join(texts))
+
+    def test_japanese_plan_finalizes_and_checks(self):
+        ja = self.to_japanese(self.plan)
+        self.assertNotEqual(ja, self.plan)
+        self.assertIn("対象: （path なし）", json.dumps(ja, ensure_ascii=False))
+        self.assertEqual(triage.check(self.inp, ja, now=NOW), [])
+        final = triage.finalize(self.inp, ja, now=NOW)
+        self.assertEqual(triage.check(self.inp, final, final=True, now=NOW), [])
+
+    def test_mixed_or_changed_text_is_rejected(self):
+        ja = self.to_japanese(self.plan)
+        it = next(i for i in ja["items"] if i["action"] and i["action"].get("followup"))
+        it["action"]["followup"][0]["steps"][0]["text"] = self.plan["items"][ja["items"].index(it)]["action"]["followup"][0]["steps"][0]["text"]
+        self.assertIn("I-13", codes(triage.check(self.inp, ja, now=NOW)))
+        ja = self.to_japanese(self.plan)
+        it = next(i for i in ja["items"] if i["action"] and i["action"]["type"] == "checklist")
+        it["action"]["params"]["steps"][0]["text"] += "。"
+        self.assertIn("I-13", codes(triage.check(self.inp, ja, now=NOW)))
 
 
 class TestPlanHashUnchanged(unittest.TestCase):
