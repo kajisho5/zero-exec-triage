@@ -49,14 +49,14 @@ See [SKILL.md](SKILL.md) for the detailed procedure and how to write decisions, 
 | I-1 | Every finding in the input appears exactly once in either items or held, and every decision in items is filled in |
 | I-2 | No finding_id that does not exist in the input |
 | I-3 | An exception requires exception_type, reason, recheck_at, and approval by someone other than the decider (names are compared case-insensitively). A defer also requires a reason unless level_effective is INFO. decided_by / decided_at are mandatory |
-| I-4 | A remediate requires owner, due_at and action. action.target is a normalized absolute path (no `.`, `..` or repeated `/` anywhere, including a leading `//`); chmod params are only `{"mode": "0NNN"}` (no special bits) — the same acceptance rules as GER. action.reversible / skillpact_effects match the derived values |
+| I-4 | A remediate requires owner, due_at and action. action.target is a normalized absolute path (no `.`, `..` or repeated `/` anywhere, including a leading `//`); action.type is one GER can execute (currently only `chmod`); no two remediate items share the same action.target; chmod params are only `{"mode": "0NNN"}` (no special bits) — the same acceptance rules as GER. action.reversible / skillpact_effects match the derived values |
 | I-5 | A finding with a non-empty skillpact.divergence cannot be an exception |
 | I-6 | A skillpact.diff_anomaly finding needs at least 2 approvers (duplicates and names differing only in case count as one) |
 | I-7 | A finding that is L3-signed and has a divergence has level_effective = CRITICAL (cannot be lowered) |
 | I-8 | Approvers must be in policy.approvers (case-insensitive) |
 | I-9 | due_at is within decision date + deadlines[level_effective] days; recheck_at is mandatory for exception and for defer (when level_effective is not INFO), and must be on or after the decision date and within the decision window. The decision date (decided_at) is on or after created_at and no later than the time of execution |
 | I-10 | Findings from modules listed in errors[] go to held (they are not passed to GER). held may be used only for modules in errors[] |
-| I-11 | Strict schema (rejects unknown fields, duplicate keys, excessive nesting, invalid timestamps, non-finite numbers and invalid surrogates). For a plan that carries plan_hash, check / finalize also verify plan_hash |
+| I-11 | Strict schema (rejects unknown fields, duplicate keys, nesting deeper than GER's 64-level limit, invalid timestamps, non-finite numbers and invalid surrogates). For a plan that carries plan_hash, check / finalize also verify plan_hash |
 | I-12 | If the input is partial, the plan is partial too, and modules in errors[] are held module by module |
 
 ## Schemas

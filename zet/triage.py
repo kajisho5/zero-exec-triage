@@ -7,7 +7,7 @@ import re
 import uuid
 from typing import Any
 
-from .core import (DECISIONS, REVERSIBLE_BY_TYPE, ContractError, Violation,
+from .core import (DECISIONS, GER_ACTION_TYPES, REVERSIBLE_BY_TYPE, ContractError, Violation,
                    fmt_ts, parse_ts, plan_hash, schema_violations)
 
 MAX_DAYS = 3650  # triage-input.schema.json の deadlines / decision_window_days の最大値
@@ -87,6 +87,8 @@ def _action_shape_violations(a: dict, fid: str) -> list[Violation]:
     # normpath は先頭の // を残す（POSIX で処理系定義）ため、// はどこにあっても別に拒否する（GER は拒否する）
     if not t.startswith("/") or "//" in t or posixpath.normpath(t) != t or ".." in t.split("/"):
         v.append(Violation("I-4", "action.target は正規化された絶対パスにすること（. / .. / 連続した / を含まない）", fid))
+    if a["type"] not in GER_ACTION_TYPES:
+        v.append(Violation("I-4", f"action.type {a['type']} は GER が実行できる操作種別（{', '.join(sorted(GER_ACTION_TYPES))}）ではありません", fid))
     if a["type"] == "chmod":
         p = a["params"]
         if set(p) != {"mode"} or not isinstance(p["mode"], str) or not _CHMOD_MODE.fullmatch(p["mode"]):
@@ -229,6 +231,16 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
         v.append(Violation("I-12", "入力が ok なのに plan.status が partial です"))
     if plan["status"] == "error":
         v.append(Violation("I-12", "status: error の plan は作成しません"))
+
+    # I-4: 同じ対象への操作が 2 件あると GER は計画全体を拒否する（実行順で結果が変わる）
+    targets: dict[str, str] = {}
+    for it in plan["items"]:
+        a = it["action"]
+        if it["decision"] == "remediate" and isinstance(a, dict):
+            if a["target"] in targets:
+                v.append(Violation("I-4", f"action.target が {targets[a['target']]} と重複しています", it["finding_id"]))
+            else:
+                targets[a["target"]] = it["finding_id"]
 
     for it in plan["items"]:
         fid = it["finding_id"]

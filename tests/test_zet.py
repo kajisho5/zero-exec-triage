@@ -56,12 +56,12 @@ def fill(inp: dict, plan: dict) -> dict:
     """下書きを「全件 remediate（できないものは defer）」で埋めた合格計画にする。"""
     by_id = {x["id"]: x for x in inp["findings"]["findings"]}
     p = copy.deepcopy(plan)
-    for it in p["items"]:
+    for n, it in enumerate(p["items"]):
         x = by_id[it["finding_id"]]
         if it["decision"] is None:
             it["decision"] = "remediate"
             it["owner"] = "team-a"
-            it["action"] = {"type": "chmod", "target": "/srv/target", "params": {"mode": "0600"}}
+            it["action"] = {"type": "chmod", "target": f"/srv/target-{n}", "params": {"mode": "0600"}}
         it["decided_by"] = it["decided_by"] or "bob"
         it["decided_at"] = it["decided_at"] or "2026-10-22T10:00:00Z"
         if x.get("skillpact") and x["skillpact"]["diff_anomaly"]:
@@ -719,7 +719,7 @@ class TestRegressionsR2(unittest.TestCase):
         self.assertNotIn(b"Traceback", r.stderr)
         self.assertEqual([x["result"] for x in self.audit_records()], ["error"])
 
-    # 1. 入れ子の深い params: 出力できたときだけ ok（Python の版により成功するか 70 になる）
+    # 1. 入れ子の深い params: 出力できたときだけ ok（現在は 64 段を超えるため読み込み時に I-11 で 3 になる）
     def test_deep_params_audit_matches_output(self):
         it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
         it["action"] = {"type": "write_config", "target": "/srv/app/config", "params": {"deep": "DEEP"}}
@@ -823,6 +823,45 @@ class TestRegressionsR3(unittest.TestCase):
         self.assertEqual(r.returncode, 3)
         self.assertNotIn(b"Traceback", r.stderr)
         self.assertEqual([x["result"] for x in self.audit_records()], ["ok", "rejected"])
+
+    # 5a. remediate の action.target が重複する計画は GER が拒否するため確定させない（I-4）
+    def test_duplicate_action_target_rejected(self):
+        rem = [i for i in self.plan["items"] if i["decision"] == "remediate"]
+        self.assertGreaterEqual(len(rem), 2)
+        rem[1]["action"]["target"] = rem[0]["action"]["target"]
+        v = triage.check(self.inp, self.plan)
+        self.assertEqual([(x.code, x.finding_id) for x in v], [("I-4", rem[1]["finding_id"])])
+        with self.assertRaises(ContractError):
+            triage.finalize(self.inp, self.plan)
+
+    # 5b. GER の操作レジストリに無い種別（write_config など）は確定させない（I-4）
+    def test_unsupported_action_type_rejected(self):
+        it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
+        for t, params in (("write_config", {"mode": "0600"}), ("rotate_secret", {}), ("chmodx", {"mode": "0600"})):
+            p = copy.deepcopy(self.plan)
+            next(i for i in p["items"] if i["finding_id"] == it["finding_id"])["action"].update(type=t, params=params)
+            self.assertIn("I-4", codes(triage.check(self.inp, p)), t)
+            with self.assertRaises(ContractError):
+                triage.finalize(self.inp, p)
+
+    # 5c. GER と同じく 64 段を超える入れ子は I-11（GER が読めない文書を確定させない）
+    def test_nesting_depth_limit_matches_ger(self):
+        for depth, ok in ((64, True), (65, False)):
+            (self.d / "deep.json").write_text("[" * depth + "]" * depth, encoding="utf-8")
+            if ok:
+                load_json(str(self.d / "deep.json"))
+                continue
+            with self.assertRaises(ContractError) as cm:
+                load_json(str(self.d / "deep.json"))
+            self.assertEqual(codes(cm.exception.violations), {"I-11"})
+        it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
+        it["action"]["params"] = {"mode": "0600", "x": "DEEP"}
+        (self.d / "plan.json").write_text(json.dumps(self.plan).replace('"DEEP"', "[" * 70 + "]" * 70), encoding="utf-8")
+        code, _, err = self.run_cli("finalize", str(self.d / "in.json"), str(self.d / "plan.json"),
+                                    "--operator", "alice", "-o", str(self.d / "final.json"))
+        self.assertEqual(code, 3)
+        self.assertIn("I-11", err)
+        self.assertFalse((self.d / "final.json").exists())
 
 
 def stat_is_fifo(p) -> bool:
