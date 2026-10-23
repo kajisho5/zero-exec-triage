@@ -10,6 +10,7 @@ ZET is now English-first, like ZES 0.5.0. Behavior does not change apart from th
 - **Compatibility of checklist texts (I-13)**: I-13 compares the steps of each checklist and followup with its template word for word. Drafts and finalized plans made by an earlier ZET contain the Japanese step texts, so the earlier Japanese templates are kept frozen in `zet/legacy_templates.py`, and a checklist passes when every step of its template matches either the English or the Japanese text (one language per checklist). Such drafts can still be finalized and such plans still pass `zet check`. New drafts are always English. GER checks only the shape of the steps (`id`, `text`, `blocking`), so it accepts plans in either language; their `plan_hash` is unchanged because ZET never rewrites a plan
 - **Docs**: README, SECURITY, `docs/design/design.md` and the brand README are English, with Japanese as `*.ja.md` (language switch at the top). SKILL.md is English and tells agents to answer in the user's language. Schema descriptions (`schemas/remediation-plan.schema.json`, `schemas/triage-input.schema.json`), code comments, tests, the test runner output and workflow comments / step names are English. Vendored schemas, test fixtures (real ZES 0.3.x output with Japanese `detail`), the brand scripts shared with ZES / GER and `docs/design/flow.svg` are unchanged
 - The usage example in the README now finalizes `plan.previewed.json` (the file that `ger preview` writes), as SKILL.md already did
+- **Repeated step ids are rejected (I-4)**: a checklist or followup whose `steps[]` repeat an id (for example the English and the Japanese steps of one template, both `s1`…) passed `zet check` and `finalize`, but GER always rejects it (G-1). ZET now reports it before finalization
 
 ### 日本語
 
@@ -19,6 +20,7 @@ ZES 0.5.0 と同じく、ZET を英語優先にしました。人が読む文の
 - **チェックリストの文言の互換性（I-13）**: I-13 は checklist と followup の手順を雛形と一字一句比べます。以前の ZET が作った下書き・確定 plan には日本語の文言が入っているため、以前の日本語の雛形を `zet/legacy_templates.py` に凍結して残し、雛形のすべての手順が英語か日本語のどちらか一方と一致すれば合格にします（1 つのチェックリストの中で言語は混ぜられません）。そうした下書きは引き続き finalize でき、確定 plan は `zet check` を通ります。新しい draft は常に英語です。GER は手順の形（`id`・`text`・`blocking`）だけを確かめるため、どちらの言語の plan も受け付けます。ZET は plan を書き換えないので `plan_hash` も変わりません
 - **文書**: README・SECURITY・`docs/design/design.md`・brand の README を英語にし、日本語を `*.ja.md` に置きました（先頭に言語の切り替え）。SKILL.md は英語で、利用者の言語で答えるようエージェントに指示します。スキーマの description、コードのコメント、テスト、テストランナーの出力、ワークフローのコメントと step 名も英語です。vendor のスキーマ、テストのフィクスチャ（日本語の `detail` を含む ZES 0.3.x の実出力）、ZES / GER と共通の brand のスクリプト、`docs/design/flow.svg` は変えていません
 - README の使い方の例で finalize するファイルを `plan.previewed.json`（`ger preview` が書き出すファイル）に直しました（SKILL.md は以前からこの形）
+- **手順 id の重複を拒否（I-4）**: `steps[]` の id が重複するチェックリスト・followup（たとえば同じテンプレートの英語と日本語の手順を両方入れて `s1`… が 2 回ずつ出るもの）は `zet check` と `finalize` を通っていたが、GER は必ず拒否する（G-1）。確定の前に ZET が報告する
 
 ### findings 1.2（ZES 0.5.0）を受け付ける
 

@@ -433,6 +433,23 @@ class TestLegacyJapaneseTemplates(unittest.TestCase):
         self.assertIn("I-13", codes(triage.check(self.inp, ja, now=NOW)))
 
 
+    def test_both_languages_in_one_checklist_is_rejected(self):
+        # English and Japanese steps together satisfy the template check, but the ids repeat and GER rejects that (G-1)
+        ja = self.to_japanese(self.plan)
+        for q in (ja, self.plan):
+            q = copy.deepcopy(q)
+            it = next(i for i in q["items"] if i["action"] and i["action"]["type"] == "checklist")
+            k = q["items"].index(it)
+            other = (self.plan if q is not self.plan else ja)["items"][k]["action"]["params"]["steps"]
+            it["action"]["params"]["steps"] += copy.deepcopy(other)
+            v = triage.check(self.inp, q, now=NOW)
+            self.assertIn("I-4", codes(v), v)
+            self.assertTrue(any("unique" in x.message for x in v), v)
+        q = copy.deepcopy(self.plan)
+        it = next(i for i in q["items"] if i["action"] and i["action"].get("followup"))
+        it["action"]["followup"][0]["steps"].append(copy.deepcopy(it["action"]["followup"][0]["steps"][0]))
+        self.assertIn("I-4", codes(triage.check(self.inp, q, now=NOW)))
+
 class TestPlanHashUnchanged(unittest.TestCase):
     def test_plan_hash_definition(self):
         p = {"schema_version": "1.1", "plan_id": "x", "items": [], "held": []}

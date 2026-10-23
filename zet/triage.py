@@ -191,6 +191,11 @@ def _action_shape_violations(a: dict, fid: str, finding: dict, sug: list | None 
     if a["type"] == "checklist" and isinstance(a["params"], dict) and not remedy.template_ok(a["params"], path, pkg):
         v.append(Violation("I-13", "the steps of a checklist must include all the steps of the ZET template", fid))
     fus = a.get("followup", [])
+    # GER rejects steps whose ids repeat (G-1), for example a checklist that holds both the English and the Japanese steps
+    for label, cl in ([("params", a["params"])] if a["type"] == "checklist" else []) + [("followup", fu) for fu in fus]:
+        ids = [s.get("id") for s in cl.get("steps", []) if isinstance(s, dict)] if isinstance(cl, dict) and isinstance(cl.get("steps"), list) else []
+        if len(ids) != len(set(map(str, ids))):
+            v.append(Violation("I-4", f"the ids of {label}.steps[] must be unique (GER rejects repeated ids)", fid))
     if a["type"] == "checklist" and fus:
         v.append(Violation("I-4", "a checklist action cannot have followup (write the steps in params.steps)", fid))
     for fu in fus:
