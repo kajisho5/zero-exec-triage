@@ -485,6 +485,26 @@ class TestRegressions(unittest.TestCase):
         self.assertEqual(self.run_cli("draft", str(self.d / "in.json"), "--operator", "alice", "--now", "9999-12-30T00:00:00Z")[0], 64)
         self.assertEqual(self.run_cli("draft", str(self.d / "in.json"), "--operator", "alice", "--now", "2026-13-01T00:00:00Z")[0], 64)
 
+    # 8. 監査ログ: 途中で切れた最終行に連結しない / シンボリックリンクのログは拒否
+    def test_audit_torn_line_and_symlink(self):
+        audit.append({"command": "validate"})
+        with open(audit.log_path(), "ab") as f:
+            f.write(b'{"command":"torn')
+        rec = audit.append({"command": "check"})
+        lines = audit.log_path().read_bytes().split(b"\n")
+        self.assertEqual(lines[-1], b"")
+        self.assertEqual(json.loads(lines[-2])["command"], "check")
+        self.assertEqual(rec["prev_hash"], "sha256:" + hashlib.sha256(b'{"command":"torn').hexdigest())
+        self.assertEqual(audit.verify_chain(), ["line 2: JSON ではありません"])
+        target = self.d / "elsewhere.jsonl"
+        target.write_bytes(b"")
+        audit.log_path().unlink()
+        audit.log_path().symlink_to(target)
+        with self.assertRaises(OSError):
+            audit.append({"command": "validate"})
+        self.assertEqual(target.read_bytes(), b"")
+        self.assertEqual(self.run_cli("validate", str(self.d / "in.json"), "--operator", "alice")[0], 64)
+
 
 if __name__ == "__main__":
     unittest.main()

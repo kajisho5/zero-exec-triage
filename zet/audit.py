@@ -55,7 +55,8 @@ def append(record: dict) -> dict:
     """排他ロックの下で直前行のハッシュを付けて追記する。既存行は変更しない。"""
     ensure_writable()
     p = log_path()
-    fd = os.open(p, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
+    # O_NOFOLLOW: シンボリックリンクにされたログには書かない（fail-closed）
+    fd = os.open(p, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "r+b") as f:
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
         try:
@@ -64,6 +65,10 @@ def append(record: dict) -> dict:
                    "prev_hash": None if last is None else "sha256:" + hashlib.sha256(last).hexdigest()}
             line = json.dumps(rec, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
             f.seek(0, os.SEEK_END)
+            if f.tell() > 0:
+                f.seek(-1, os.SEEK_END)
+                if f.read(1) != b"\n":  # 途中で切れた行に連結しないよう、先に改行を補う
+                    line = b"\n" + line
             f.write(line + b"\n")
             f.flush()
             os.fsync(f.fileno())
