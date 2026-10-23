@@ -627,6 +627,23 @@ class TestRegressionsR2(unittest.TestCase):
         recs = [json.loads(line) for line in audit.log_path().read_text().splitlines()]
         self.assertEqual([r.get("now_override") for r in recs], [None, True])
 
+    # 7b. 既存のログディレクトリがグループ・他者から書き込み可能、または他人の所有なら拒否（64）
+    def test_log_dir_permissions_checked(self):
+        logd = self.d / "log"
+        logd.mkdir(mode=0o700)
+        args = ("validate", str(self.d / "in.json"), "--operator", "alice")
+        self.assertEqual(self.run_cli(*args)[0], 0)
+        for mode in (0o777, 0o720, 0o702):
+            os.chmod(logd, mode)
+            self.assertEqual(self.run_cli(*args)[0], 64, oct(mode))
+        os.chmod(logd, 0o755)
+        self.assertEqual(self.run_cli(*args)[0], 0)
+        if os.geteuid() == 0:
+            os.chown(logd, 12345, -1)
+            self.assertEqual(self.run_cli(*args)[0], 64)
+            os.chown(logd, 0, -1)
+        self.assertEqual(len(audit.log_path().read_text().splitlines()), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

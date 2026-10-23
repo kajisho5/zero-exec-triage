@@ -67,7 +67,7 @@ bin/zet finalize triage-input.json plan.draft.json --operator alice -o remediati
 
 ## 監査ログ
 
-`$ZET_LOG_DIR/zet-audit.jsonl`（既定 `~/.local/state/zet/`）。1 行 1 レコード（command / operator / input_hash / output_hash / started_at / finished_at / result / violations / prev_hash。`--now` を使った実行には `now_override: true`）。拒否も記録し、`prev_hash` のハッシュチェーンで改ざんを検出できます。ログに書けない場合は何もしません。
+`$ZET_LOG_DIR/zet-audit.jsonl`（既定 `~/.local/state/zet/`）。1 行 1 レコード（command / operator / input_hash / output_hash / started_at / finished_at / result / violations / prev_hash。`--now` を使った実行には `now_override: true`）。拒否も記録し、`prev_hash` のハッシュチェーンで改ざんを検出できます。ログに書けない場合、またはログのディレクトリが実行ユーザー以外の所有かグループ・他者から書き込み可能な場合は何もしません（終了コード `64`）。
 
 ## テスト
 
