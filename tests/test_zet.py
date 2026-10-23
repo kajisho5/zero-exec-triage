@@ -7,6 +7,7 @@ import io
 import json
 import errno
 import os
+import posixpath
 import stat
 import subprocess
 import tempfile
@@ -48,23 +49,33 @@ def make_input(findings: str = "findings-skillpact.json") -> dict:
         "findings": load(findings),
         "policy": {"deadlines": {"CRITICAL": 7, "HIGH": 30, "MEDIUM": 60, "LOW": 90},
                    "decision_window_days": 14, "approvers": ["security-lead", "platform-owner", "alice"]},
-        "skillpact_policy": {"l3_trusted": False, "diff_anomaly_threshold": 0.3, "destructive_requires_human": True},
+        "skillpact_policy": {"l3_trusted": False},
     }
 
 
 def fill(inp: dict, plan: dict) -> dict:
-    """下書きを「全件 remediate（できないものは defer）」で埋めた合格計画にする。"""
+    """下書きを「全件 remediate（できないものは defer）」で埋めた合格計画にする。
+
+    action.target は finding の path（I-4）。path が null、または他の finding と path が重なるもの
+    （同じ対象への操作は 1 件まで）は defer にする。
+    """
     by_id = {x["id"]: x for x in inp["findings"]["findings"]}
     p = copy.deepcopy(plan)
-    for n, it in enumerate(p["items"]):
+    paths = [by_id[it["finding_id"]]["path"] for it in p["items"]]
+    for it in p["items"]:
         x = by_id[it["finding_id"]]
         if it["decision"] is None:
-            it["decision"] = "remediate"
-            it["owner"] = "team-a"
-            it["action"] = {"type": "chmod", "target": f"/srv/target-{n}", "params": {"mode": "0600"}}
+            if x["path"] is not None and paths.count(x["path"]) == 1:
+                it["decision"] = "remediate"
+                it["owner"] = "team-a"
+                it["action"] = {"type": "chmod", "target": x["path"], "params": {"mode": "0600"}}
+            else:
+                it["decision"] = "defer"
+                it["reason"] = "target shared with another finding"
+                it["due_at"] = None
         it["decided_by"] = it["decided_by"] or "bob"
         it["decided_at"] = it["decided_at"] or "2026-10-22T10:00:00Z"
-        if x.get("skillpact") and x["skillpact"]["diff_anomaly"]:
+        if triage.min_approvers(x, it["decision"]) >= 2:
             it["approved_by"] = ["security-lead", "platform-owner"]
     return p
 
@@ -511,17 +522,17 @@ class TestRegressions(unittest.TestCase):
         self.assertEqual(self.run_cli("draft", str(self.d / "in.json"), "--operator", "alice", "--now", "9999-12-30T00:00:00Z")[0], 64)
         self.assertEqual(self.run_cli("draft", str(self.d / "in.json"), "--operator", "alice", "--now", "2026-13-01T00:00:00Z")[0], 64)
 
-    # 8. 監査ログ: 途中で切れた最終行に連結しない / シンボリックリンクのログは拒否
+    # 8. 監査ログ: 途中で切れた最終行の後ろには追記しない（R3 F15: 壊れたチェーンには足さない）/ シンボリックリンクのログは拒否
     def test_audit_torn_line_and_symlink(self):
         audit.append({"command": "validate"})
         with open(audit.log_path(), "ab") as f:
             f.write(b'{"command":"torn')
-        rec = audit.append({"command": "check"})
-        lines = audit.log_path().read_bytes().split(b"\n")
-        self.assertEqual(lines[-1], b"")
-        self.assertEqual(json.loads(lines[-2])["command"], "check")
-        self.assertEqual(rec["prev_hash"], "sha256:" + hashlib.sha256(b'{"command":"torn').hexdigest())
-        self.assertEqual(audit.verify_chain(), ["line 2: JSON ではありません"])
+        before = audit.log_path().read_bytes()
+        with self.assertRaises(audit.BrokenChain):
+            audit.append({"command": "check"})
+        self.assertEqual(audit.log_path().read_bytes(), before)
+        self.assertEqual(audit.verify_chain(), ["line 2: 改行で終わっていません（書き込みが途中で切れた可能性）",
+                                                "line 2: JSON ではありません"])
         target = self.d / "elsewhere.jsonl"
         target.write_bytes(b"")
         audit.log_path().unlink()
@@ -616,7 +627,7 @@ class TestRegressionsR2(unittest.TestCase):
             p = copy.deepcopy(self.plan)
             next(i for i in p["items"] if i["finding_id"] == it["finding_id"])["action"]["params"] = params
             self.assertIn("I-4", codes(triage.check(self.inp, p)), params)
-        it["action"].update(target="/srv/app/config.yml", params={"mode": "0644"})
+        it["action"].update(params={"mode": "0644"})
         self.assertEqual(triage.check(self.inp, self.plan), [])
         triage.finalize(self.inp, self.plan)
 
@@ -836,7 +847,8 @@ class TestRegressionsR3(unittest.TestCase):
         self.assertGreaterEqual(len(rem), 2)
         rem[1]["action"]["target"] = rem[0]["action"]["target"]
         v = triage.check(self.inp, self.plan)
-        self.assertEqual([(x.code, x.finding_id) for x in v], [("I-4", rem[1]["finding_id"])])
+        self.assertEqual({(x.code, x.finding_id) for x in v}, {("I-4", rem[1]["finding_id"])})
+        self.assertTrue(any("重複" in x.message for x in v))
         with self.assertRaises(ContractError):
             triage.finalize(self.inp, self.plan)
 
@@ -868,6 +880,157 @@ class TestRegressionsR3(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertIn("I-11", err)
         self.assertFalse((self.d / "final.json").exists())
+
+
+class TestRegressionsR3Fixes(unittest.TestCase):
+    """round 3 の指摘（F5 / F7 / F8 / F10 / F14 / F15）の回帰テスト。"""
+
+    setUp = TestRegressions.setUp
+    tearDown = TestRegressions.tearDown
+    run_cli = TestCliAndAudit.run_cli
+    audit_records = TestRegressionsR2.audit_records
+
+    def remediate_item(self, plan=None):
+        return next(i for i in (plan or self.plan)["items"] if i["decision"] == "remediate")
+
+    def finding(self, fid):
+        return next(x for x in self.inp["findings"]["findings"] if x["id"] == fid)
+
+    # F7: action.target は finding の path そのもの（別のパス・配下のパス・path が null の finding は不可）
+    def test_f7_target_must_equal_finding_path(self):
+        it = self.remediate_item()
+        path = self.finding(it["finding_id"])["path"]
+        self.assertEqual(it["action"]["target"], path)
+        for target in ("/home/u/.ssh/id_ed25519", path + "/child", posixpath.dirname(path)):
+            p = copy.deepcopy(self.plan)
+            self.remediate_item(p)["action"]["target"] = target
+            v = triage.check(self.inp, p)
+            self.assertIn(("I-4", it["finding_id"]), {(x.code, x.finding_id) for x in v}, target)
+            self.assertTrue(any("finding の path" in x.message for x in v), target)
+            with self.assertRaises(ContractError):
+                triage.finalize(self.inp, p)
+        inp = copy.deepcopy(self.inp)
+        x = next(f for f in inp["findings"]["findings"] if f["id"] == it["finding_id"])
+        x["path"] = None
+        self.assertTrue(any("null" in v.message for v in triage.check(inp, self.plan)))
+
+    # F7: ZET は現在の mode を知らないため、静的に分かる緩和（world-writable、特殊ビット）を拒否する
+    def test_f7_chmod_mode_cannot_be_world_writable_or_special(self):
+        for mode, ok in (("0600", True), ("0644", True), ("0000", True), ("0666", False), ("0602", False),
+                         ("0777", False), ("04755", False), ("02755", False), ("01777", False)):
+            p = copy.deepcopy(self.plan)
+            self.remediate_item(p)["action"]["params"] = {"mode": mode}
+            self.assertEqual(not any(v.code == "I-4" for v in triage.check(self.inp, p)), ok, mode)
+
+    # F5: --now で作った plan には now_override: true を残す（draft で使った場合も finalize に引き継ぐ）
+    def test_f5_now_override_recorded_in_plan(self):
+        final = triage.finalize(self.inp, self.plan, now=NOW)
+        self.assertNotIn("now_override", final)
+        final = triage.finalize(self.inp, self.plan, now=NOW, now_override=True)
+        self.assertIs(final["now_override"], True)
+        self.assertEqual(final["plan_hash"], plan_hash(final))
+        self.assertEqual(triage.check(self.inp, final, final=True), [])
+        d = triage.draft(self.inp, NOW, "alice", now_override=True)
+        self.assertIs(d["now_override"], True)
+        self.assertIs(triage.finalize(self.inp, fill(self.inp, d), now=NOW)["now_override"], True)
+        # スキーマ: 省略は従来どおり有効、false は不可（省略と同じ意味の別表現を作らない）
+        bad = copy.deepcopy(final); bad["now_override"] = False; bad["plan_hash"] = plan_hash(bad)
+        self.assertIn("I-11", codes(triage.check(self.inp, bad, final=True)))
+        (self.d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
+        code, _, err = self.run_cli("finalize", str(self.d / "in.json"), str(self.d / "plan.json"), "--operator", "alice",
+                                    "--now", "2026-10-22T10:00:00Z", "-o", str(self.d / "final.json"))
+        self.assertEqual(code, 0, err)
+        self.assertIs(json.loads((self.d / "final.json").read_text())["now_override"], True)
+
+    # F8: 入力由来の文字列（キー名など）に含まれる ESC・C1 制御文字をそのまま端末に出さない
+    def test_f8_control_characters_escaped_in_messages(self):
+        from zet.jsonschema_lite import safe_text
+        self.assertEqual(safe_text("a\x1b]0;X\x07\x9b\u202eb\\c"), "a\\x1b]0;X\\x07\\x9b\\u202eb\\c")
+        self.assertEqual(safe_text(safe_text("a\x1b")), "a\\x1b")  # 冪等（検証器と CLI の両方で適用しても二重にしない）
+        bad = dict(self.inp); bad["x\x1b]0;PWNED\x07\x1b[2J\x9b"] = 1
+        (self.d / "bad.json").write_text(json.dumps(bad), encoding="utf-8")
+        code, _, err = self.run_cli("validate", str(self.d / "bad.json"), "--operator", "alice")
+        self.assertEqual(code, 3)
+        self.assertIn("unknown field", err)
+        for c in ("\x1b", "\x07", "\x9b"):
+            self.assertNotIn(c, err)
+        self.assertIn("unknown field 'x\\x1b]0;PWNED\\x07\\x1b[2J\\x9b'", err)
+
+    # F10: skillpact_effects は SkillPact 0.8 の 6 効果だけ。危険な効果を宣言したスキルの remediate は承認者 2 名（GER G-6 と同じ）
+    def test_f10_effects_enum_and_risky_effects_need_two_approvers(self):
+        final = triage.finalize(self.inp, self.plan)
+        for eff in ("EXEC", " exec ", "bogus", "secrets"):
+            p = copy.deepcopy(final); self.remediate_item(p)["action"]["skillpact_effects"] = [eff]
+            self.assertTrue(validator("remediation-plan.schema.json").errors(p), eff)
+        risky = [it for it in self.plan["items"] if it["decision"] == "remediate"
+                 and triage.risky_effects(self.finding(it["finding_id"]))]
+        self.assertTrue(risky)
+        it = risky[0]
+        it["approved_by"] = ["security-lead"]
+        v = triage.check(self.inp, self.plan)
+        self.assertIn(("I-6", it["finding_id"]), {(x.code, x.finding_id) for x in v})
+        it["approved_by"] = ["security-lead", "platform-owner"]
+        self.assertEqual(triage.check(self.inp, self.plan), [])
+
+    # F14: 未実装の skillpact_policy の項目は「予約・未実装」として拒否する
+    def test_f14_reserved_skillpact_policy_fields_rejected(self):
+        for k, val in (("diff_anomaly_threshold", 0.3), ("destructive_requires_human", True), ("destructive_requires_human", False)):
+            inp = copy.deepcopy(self.inp); inp["skillpact_policy"][k] = val
+            v = triage.validate_input(inp)
+            self.assertEqual([(x.code, k in x.message and "予約" in x.message) for x in v], [("SP", True)], k)
+        self.assertEqual(triage.validate_input(self.inp), [])
+
+    # F14 / F1: 確定 plan は evidence_hash と skillpact の要約を持ち、check は入力と一致することを確かめる
+    def test_f14_evidence_hash_and_skillpact_summary_carried(self):
+        final = triage.finalize(self.inp, self.plan)
+        for it in final["items"]:
+            x = self.finding(it["finding_id"])
+            if it["action"]:
+                self.assertEqual(it["action"]["evidence_hash"], x["evidence_hash"])
+            if x.get("skillpact"):
+                self.assertEqual(it["skillpact"]["divergence"], x["skillpact"]["divergence"])
+                self.assertEqual(it["skillpact"]["declared_effects"], x["skillpact"]["declared_effects"])
+            else:
+                self.assertNotIn("skillpact", it)
+        p = copy.deepcopy(final); self.remediate_item(p)["action"]["evidence_hash"] = "sha256:" + "0" * 64
+        p["plan_hash"] = plan_hash(p)
+        self.assertIn("I-4", codes(triage.check(self.inp, p, final=True)))
+        p = copy.deepcopy(final); del self.remediate_item(p)["action"]["evidence_hash"]; p["plan_hash"] = plan_hash(p)
+        self.assertIn("I-4", codes(triage.check(self.inp, p, final=True)))
+        p = copy.deepcopy(final)
+        it = next(i for i in p["items"] if "skillpact" in i)
+        it["skillpact"]["diff_anomaly"] = not it["skillpact"]["diff_anomaly"]; p["plan_hash"] = plan_hash(p)
+        self.assertIn("I-5", codes(triage.check(self.inp, p, final=True)))
+        del it["skillpact"]; p["plan_hash"] = plan_hash(p)
+        self.assertIn("I-5", codes(triage.check(self.inp, p, final=True)))
+
+    # F15: zet verify-log と、壊れたチェーンへの追記の拒否
+    def test_f15_verify_log_and_refuse_append_to_broken_chain(self):
+        code, _, err = self.run_cli("verify-log")
+        self.assertEqual(code, 64, err)  # まだログが無い
+        for _ in range(3):
+            self.assertEqual(self.run_cli("validate", str(self.d / "in.json"), "--operator", "alice")[0], 0)
+        code, _, err = self.run_cli("verify-log")
+        self.assertEqual(code, 0, err)
+        self.assertIn("3", err)
+        log = audit.log_path()
+        lines = log.read_bytes().splitlines(keepends=True)
+        # 末尾の行の prev_hash を書き換える（途中の行の改ざんは verify-log が検出する）
+        rec = json.loads(lines[-1]); rec["prev_hash"] = "sha256:" + "0" * 64
+        log.write_bytes(b"".join(lines[:-1]) + json.dumps(rec).encode() + b"\n")
+        code, _, err = self.run_cli("verify-log", str(log))
+        self.assertEqual(code, 3)
+        self.assertIn("line 3: prev_hash 不一致", err)
+        before = log.read_bytes()
+        code, _, err = self.run_cli("validate", str(self.d / "in.json"), "--operator", "alice")
+        self.assertEqual(code, 64)
+        self.assertIn("verify-log", err)
+        self.assertEqual(log.read_bytes(), before)  # 何も追記しない
+        with self.assertRaises(audit.BrokenChain):
+            audit.append({"command": "validate"})
+        # 途中の行の破損は verify-log で検出（末尾が健全なら追記はできる）
+        log.write_bytes(lines[0] + b"garbage\n")
+        self.assertEqual(self.run_cli("verify-log")[0], 3)
 
 
 def stat_is_fifo(p) -> bool:

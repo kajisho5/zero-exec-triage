@@ -7,11 +7,14 @@ import re
 import uuid
 from typing import Any
 
-from .core import (DECISIONS, GER_ACTION_TYPES, REVERSIBLE_BY_TYPE, ContractError, Violation,
+from .core import (DECISIONS, GER_ACTION_TYPES, REVERSIBLE_BY_TYPE, RISKY_EFFECTS, ContractError, Violation,
                    fmt_ts, parse_ts, plan_hash, schema_violations)
 
 MAX_DAYS = 3650  # triage-input.schema.json の deadlines / decision_window_days の最大値
-_CHMOD_MODE = re.compile(r"0[0-7]{3}")  # GER と同じ。特殊ビット（setuid など）は不可
+_CHMOD_MODE = re.compile(r"0[0-7]{3}")  # GER と同じ。特殊ビット（setuid / setgid / sticky）は不可
+# 予約済みで未実装の skillpact_policy の項目。値を受け取って黙って無視すると、効いていない設定を
+# 効いていると誤解させる（例: destructive_requires_human: true）ため、指定されたら拒否する
+RESERVED_SKILLPACT_POLICY = ("diff_anomaly_threshold", "destructive_requires_human")
 
 
 # --- 入力検証（zet validate） ----------------------------------------------
@@ -27,6 +30,9 @@ def validate_input(inp: Any) -> list[Violation]:
         v.append(Violation("I-12", 'findings.status == "error" の入力は受け付けません（失敗の伝播）'))
     if inp["skillpact_policy"]["l3_trusted"]:
         v.append(Violation("SP", "skillpact_policy.l3_trusted = true は契約違反です（L3 署名を信頼根拠にしない）"))
+    for k in RESERVED_SKILLPACT_POLICY:
+        if k in inp["skillpact_policy"]:
+            v.append(Violation("SP", f"skillpact_policy.{k} は予約済みで未実装です（ZET は評価しません）。指定を外してください"))
     ids = [x["id"] for x in f["findings"]]
     if len(ids) != len(set(ids)):
         v.append(Violation("I-2", "findings に重複した id があります"))
@@ -72,6 +78,8 @@ def min_approvers(finding: dict, decision: str | None) -> int:
         n = 1
     if sp and sp["diff_anomaly"]:
         n = max(n, 2)
+    if decision == "remediate" and risky_effects(finding):
+        n = max(n, 2)  # GER の G-6 と同じ: exec / network / spend / send を宣言したスキルへの操作は 2 名以上
     return n
 
 
@@ -80,19 +88,47 @@ def skillpact_effects(finding: dict) -> list[str]:
     return list(sp["declared_effects"]) if sp else []
 
 
-def _action_shape_violations(a: dict, fid: str) -> list[Violation]:
-    """GER が必ず拒否する action を確定させない（I-4）。GER の受理条件と同じ判定。"""
+def risky_effects(finding: dict) -> list[str]:
+    return [e for e in skillpact_effects(finding) if e in RISKY_EFFECTS]
+
+
+def skillpact_summary(finding: dict) -> dict | None:
+    """確定 plan の items[].skillpact。GER が I-5 / I-6 / I-7 と skillpact_effects の整合を plan だけで再検査するための材料。"""
+    sp = finding.get("skillpact")
+    if not sp:
+        return None
+    return {"signed": sp["signed"], "divergence": list(sp["divergence"]), "diff_anomaly": sp["diff_anomaly"],
+            "declared_effects": list(sp["declared_effects"])}
+
+
+def _same_summary(a: dict, b: dict) -> bool:
+    return (a["signed"] == b["signed"] and a["diff_anomaly"] == b["diff_anomaly"]
+            and sorted(a["divergence"]) == sorted(b["divergence"])
+            and sorted(a["declared_effects"]) == sorted(b["declared_effects"]))
+
+
+def _action_shape_violations(a: dict, fid: str, finding: dict) -> list[Violation]:
+    """GER が必ず拒否する action と、finding と無関係な対象への action を確定させない（I-4）。"""
     v: list[Violation] = []
     t = a["target"]
     # normpath は先頭の // を残す（POSIX で処理系定義）ため、// はどこにあっても別に拒否する（GER は拒否する）
     if not t.startswith("/") or "//" in t or posixpath.normpath(t) != t or ".." in t.split("/"):
         v.append(Violation("I-4", "action.target は正規化された絶対パスにすること（. / .. / 連続した / を含まない）", fid))
+    # 対象は finding が指すパスそのものに限る。配下のパスは許さない（ZET はファイルシステムを見ないため
+    # path がディレクトリかを判断できず、"/" や "/home" を指す finding で任意のファイルを対象にできてしまう）
+    if finding["path"] is None:
+        v.append(Violation("I-4", "path が null の finding には action を設定できません（対象を特定できない）", fid))
+    elif t != finding["path"]:
+        v.append(Violation("I-4", "action.target は finding の path と一致させること（配下のパスや別のパスは不可）", fid))
     if a["type"] not in GER_ACTION_TYPES:
         v.append(Violation("I-4", f"action.type {a['type']} は GER が実行できる操作種別（{', '.join(sorted(GER_ACTION_TYPES))}）ではありません", fid))
     if a["type"] == "chmod":
         p = a["params"]
         if set(p) != {"mode"} or not isinstance(p["mode"], str) or not _CHMOD_MODE.fullmatch(p["mode"]):
-            v.append(Violation("I-4", 'chmod の params は {"mode": "0NNN"}（8 進 3 桁、特殊ビットなし）だけにすること', fid))
+            v.append(Violation("I-4", 'chmod の params は {"mode": "0NNN"}（8 進 3 桁、setuid / setgid / sticky なし）だけにすること', fid))
+        elif int(p["mode"], 8) & 0o002:
+            # 現在の mode は ZET からは見えない（GER が G-7 で「権限を足さない」ことを確かめる）。静的に分かる緩和は拒否する
+            v.append(Violation("I-4", "chmod で他者の書き込み権限（world-writable）は付けられません（修復は権限を絞る操作に限る）", fid))
     return v
 
 
@@ -111,7 +147,7 @@ def _timestamp_violations(plan: dict) -> list[Violation]:
 
 
 # --- 下書き（zet draft） ---------------------------------------------------
-def draft(inp: dict, now: dt.datetime, operator: str, plan_id: str | None = None) -> dict:
+def draft(inp: dict, now: dt.datetime, operator: str, plan_id: str | None = None, now_override: bool = False) -> dict:
     require_valid_input(inp)
     try:  # 期限の日数はスキーマ上 3650 日まで。加算できない現在時刻では下書きを作らない
         now + dt.timedelta(days=MAX_DAYS)
@@ -147,10 +183,11 @@ def draft(inp: dict, now: dt.datetime, operator: str, plan_id: str | None = None
             "action": None,
             "constraints": {
                 "allowed_decisions": list(allowed_decisions(x)),
-                "min_approvers": min_approvers(x, "exception" if "exception" in allowed_decisions(x) else None),
+                # 選べる判断のうち最も厳しいもの（exception は 1 名、diff_anomaly・危険な効果の remediate は 2 名）
+                "min_approvers": max(min_approvers(x, d) for d in allowed_decisions(x)),
             },
         })
-    return {
+    out = {
         "schema_version": "1.0",
         "plan_id": plan_id or str(uuid.uuid4()),
         "created_at": fmt_ts(now),
@@ -158,6 +195,9 @@ def draft(inp: dict, now: dt.datetime, operator: str, plan_id: str | None = None
         "items": items,
         "held": held,
     }
+    if now_override:  # created_at が --now 由来であることを finalize と GER に伝える
+        out["now_override"] = True
+    return out
 
 
 # --- 不変条件チェック（zet check） -----------------------------------------
@@ -267,7 +307,7 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
             v.append(Violation("I-8", f"policy.approvers に無い承認者: {', '.join(unknown)}", fid))
         need = min_approvers(x, d)
         if len(appr) < need:
-            code = "I-6" if x.get("skillpact") and x["skillpact"]["diff_anomaly"] else "I-3"
+            code = "I-6" if x.get("skillpact") and (x["skillpact"]["diff_anomaly"] or need == 2) else "I-3"
             v.append(Violation(code, f"承認者が {need} 名以上必要です（現在 {len(appr)} 名）", fid))
         if it["decided_by"] and it["decided_by"].casefold() in appr:
             v.append(Violation("I-3", "判断者本人が承認者に含まれています（自己承認）", fid))
@@ -296,8 +336,18 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
         elif it["action"] is not None:
             v.append(Violation("I-4", "remediate 以外で action が設定されています", fid))
         a = it["action"]
+        if "skillpact" in it:
+            want = skillpact_summary(x)
+            if want is None or not _same_summary(it["skillpact"], want):
+                v.append(Violation("I-5", "items[].skillpact は finding の skillpact（signed / divergence / diff_anomaly / declared_effects）と一致させること", fid))
+        elif final and x.get("skillpact"):
+            v.append(Violation("I-5", "確定 plan の item には finding の skillpact の要約（skillpact）が必要です", fid))
         if a is not None:
-            v += _action_shape_violations(a, fid)
+            v += _action_shape_violations(a, fid, x)
+            if "evidence_hash" in a and a["evidence_hash"] != x["evidence_hash"]:
+                v.append(Violation("I-4", "action.evidence_hash は finding の evidence_hash と一致させること", fid))
+            if final and "evidence_hash" not in a:
+                v.append(Violation("I-4", "確定 plan の action には evidence_hash が必要です", fid))
             rev = REVERSIBLE_BY_TYPE.get(a["type"], False)
             if "reversible" in a and a["reversible"] != rev:
                 v.append(Violation("I-4", f"action.reversible は操作種別 {a['type']} から {rev} と決まります", fid))
@@ -348,19 +398,25 @@ def _deadline_violations(it: dict, d: str, lv: str, pol: dict, created: dt.datet
 
 
 # --- 確定（zet finalize） --------------------------------------------------
-def finalize(inp: dict, plan: dict, now: dt.datetime | None = None) -> dict:
+def finalize(inp: dict, plan: dict, now: dt.datetime | None = None, now_override: bool = False) -> dict:
+    """now_override: --now で時刻を上書きした実行。plan に now_override: true を記録し、GER は既定で拒否する。"""
     v = check(inp, plan, now=now)
     if v:
         raise ContractError(v)
     by_id = {x["id"]: x for x in inp["findings"]["findings"]}
     out_items = []
     for it in plan["items"]:
-        it = {k: val for k, val in it.items() if k != "constraints"}
+        it = {k: val for k, val in it.items() if k not in ("constraints", "skillpact")}
+        x = by_id[it["finding_id"]]
         if it["action"] is not None:
             a = dict(it["action"])
             a["reversible"] = REVERSIBLE_BY_TYPE.get(a["type"], False)
-            a["skillpact_effects"] = skillpact_effects(by_id[it["finding_id"]])
+            a["skillpact_effects"] = skillpact_effects(x)
+            a["evidence_hash"] = x["evidence_hash"]  # GER が G-7 で検知時から対象が変わっていないことを確かめる
             it["action"] = a
+        sp = skillpact_summary(x)
+        if sp is not None:
+            it["skillpact"] = sp
         out_items.append(it)
     final = {
         "schema_version": "1.0",
@@ -370,6 +426,8 @@ def finalize(inp: dict, plan: dict, now: dt.datetime | None = None) -> dict:
         "items": out_items,
         "held": plan["held"],
     }
+    if now_override or plan.get("now_override"):  # draft か finalize のどちらかで時刻を上書きした
+        final["now_override"] = True
     final["plan_hash"] = plan_hash(final)
     v = check(inp, final, final=True, now=now)
     if v:

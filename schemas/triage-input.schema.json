@@ -33,11 +33,11 @@
     "skillpact_policy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["l3_trusted", "diff_anomaly_threshold", "destructive_requires_human"],
+      "required": ["l3_trusted"],
       "properties": {
         "l3_trusted": { "type": "boolean", "description": "true は契約違反として拒否する（L3 署名を信頼根拠にしない）" },
-        "diff_anomaly_threshold": { "type": "number", "minimum": 0, "maximum": 1 },
-        "destructive_requires_human": { "type": "boolean" }
+        "diff_anomaly_threshold": { "type": "number", "minimum": 0, "maximum": 1, "description": "予約（未実装）。指定すると zet validate が拒否する（ZES の diff_anomaly は真偽値で、しきい値を当てる値が無い）" },
+        "destructive_requires_human": { "type": "boolean", "description": "予約（未実装）。指定すると zet validate が拒否する（ZET は判断者が人間か AI かを区別できない）" }
       }
     }
   },
