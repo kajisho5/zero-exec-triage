@@ -332,5 +332,46 @@ class TestCliAndAudit(unittest.TestCase):
         self.assertEqual(self.run_cli("validate", str(self.d / "in.json"), "--operator", "alice")[0], 64)
 
 
+class TestRegressions(unittest.TestCase):
+    """bughunt-r1 で見つかった不具合の回帰テスト。"""
+
+    def setUp(self):
+        self.inp = make_input()
+        self.plan = fill(self.inp, triage.draft(self.inp, NOW, "alice"))
+        self.tmp = tempfile.TemporaryDirectory()
+        self.d = Path(self.tmp.name)
+        os.environ["ZET_LOG_DIR"] = str(self.d / "log")
+        (self.d / "in.json").write_text(json.dumps(self.inp), encoding="utf-8")
+
+    def tearDown(self):
+        os.environ.pop("ZET_LOG_DIR", None)
+        self.tmp.cleanup()
+
+    run_cli = TestCliAndAudit.run_cli
+
+    # 1. pattern の $ は末尾改行の直前に一致してはならない（ECMA の意味）
+    def test_pattern_dollar_does_not_match_before_newline(self):
+        it = self.plan["items"][0]
+        it.update(decided_by="alice\n", approved_by=["alice"])
+        self.assertIn("I-11", codes(triage.check(self.inp, self.plan)))
+        from zet.jsonschema_lite import Validator
+        self.assertFalse(Validator({"pattern": "^a$"}).is_valid("a\n"))
+        self.assertTrue(Validator({"pattern": "^a\\$$"}).is_valid("a$"))  # エスケープした $ はリテラル
+        self.assertTrue(Validator({"pattern": "^[$]$"}).is_valid("$"))  # 文字クラス内の $ はリテラル
+
+    def test_newline_in_module_and_id_rejected(self):
+        inp = make_input("findings-partial.json")
+        inp["findings"]["findings"][0]["module"] = "§6\n"
+        self.assertIn("I-11", codes(triage.validate_input(inp)))
+        inp = make_input()
+        inp["findings"]["findings"][1]["id"] = inp["findings"]["findings"][0]["id"] + "\n"
+        self.assertIn("I-11", codes(triage.validate_input(inp)))
+
+    def test_cli_operator_and_plan_id_newline_rejected(self):
+        self.assertEqual(self.run_cli("validate", str(self.d / "in.json"), "--operator", "ci\n")[0], 64)
+        self.assertEqual(self.run_cli("draft", str(self.d / "in.json"), "--operator", "ci",
+                                      "--plan-id", "00000000-0000-0000-0000-000000000000\n")[0], 64)
+
+
 if __name__ == "__main__":
     unittest.main()

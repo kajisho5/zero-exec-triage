@@ -55,10 +55,10 @@ def _report(violations) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if not _PERSON.match(args.operator):
+    if not _PERSON.fullmatch(args.operator):
         print("zet: --operator の形式が不正です", file=sys.stderr)
         return EXIT_USAGE
-    if getattr(args, "plan_id", None) and not _UUID.match(args.plan_id):
+    if getattr(args, "plan_id", None) and not _UUID.fullmatch(args.plan_id):
         print("zet: --plan-id は UUID（小文字）で指定してください", file=sys.stderr)
         return EXIT_USAGE
     try:
