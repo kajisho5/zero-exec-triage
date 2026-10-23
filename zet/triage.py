@@ -80,8 +80,9 @@ def skillpact_effects(finding: dict) -> list[str]:
 def _timestamp_violations(plan: dict) -> list[Violation]:
     """形式は正しくても存在しない日時（13 月、60 秒など）を I-11 として返す。"""
     v: list[Violation] = []
-    for fid, ts in [(None, plan["created_at"])] + [(it["finding_id"], it[k]) for it in plan["items"]
-                                                    for k in ("decided_at", "due_at", "recheck_at")]:
+    pairs = [(None, plan["created_at"])]
+    pairs += [(it["finding_id"], it[k]) for it in plan["items"] for k in ("decided_at", "due_at", "recheck_at")]
+    for fid, ts in pairs:
         try:
             if ts is not None:
                 parse_ts(ts)

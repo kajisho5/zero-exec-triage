@@ -12,7 +12,16 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from zet import audit, cli, triage
-from zet.core import ROOT, ContractError, canonical, load_json, parse_ts, plan_hash, validator, write_atomic
+from zet.core import (
+    ROOT,
+    ContractError,
+    canonical,
+    load_json,
+    parse_ts,
+    plan_hash,
+    validator,
+    write_atomic,
+)
 
 FIX = ROOT / "tests" / "fixtures"
 NOW = parse_ts("2026-10-22T10:00:00Z")
