@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import posixpath
+import re
 import uuid
 from typing import Any
 
@@ -9,6 +11,7 @@ from .core import (DECISIONS, REVERSIBLE_BY_TYPE, ContractError, Violation,
                    fmt_ts, parse_ts, plan_hash, schema_violations)
 
 MAX_DAYS = 3650  # triage-input.schema.json の deadlines / decision_window_days の最大値
+_CHMOD_MODE = re.compile(r"0[0-7]{3}")  # GER と同じ。特殊ビット（setuid など）は不可
 
 
 # --- 入力検証（zet validate） ----------------------------------------------
@@ -77,6 +80,19 @@ def skillpact_effects(finding: dict) -> list[str]:
     return list(sp["declared_effects"]) if sp else []
 
 
+def _action_shape_violations(a: dict, fid: str) -> list[Violation]:
+    """GER が必ず拒否する action を確定させない（I-4）。GER の受理条件と同じ判定。"""
+    v: list[Violation] = []
+    t = a["target"]
+    if not t.startswith("/") or posixpath.normpath(t) != t or ".." in t.split("/"):
+        v.append(Violation("I-4", "action.target は正規化された絶対パスにすること（. / .. / 連続した / を含まない）", fid))
+    if a["type"] == "chmod":
+        p = a["params"]
+        if set(p) != {"mode"} or not isinstance(p["mode"], str) or not _CHMOD_MODE.fullmatch(p["mode"]):
+            v.append(Violation("I-4", 'chmod の params は {"mode": "0NNN"}（8 進 3 桁、特殊ビットなし）だけにすること', fid))
+    return v
+
+
 def _timestamp_violations(plan: dict) -> list[Violation]:
     """形式は正しくても存在しない日時（13 月、60 秒など）を I-11 として返す。"""
     v: list[Violation] = []
@@ -112,7 +128,7 @@ def draft(inp: dict, now: dt.datetime, operator: str, plan_id: str | None = None
             continue
         lv = level_effective(x)
         days = pol["deadlines"].get(lv)
-        info_default = x["level"] == "INFO"
+        info_default = lv == "INFO"  # 引き上げ後の重大度で判断する（INFO → CRITICAL を自動 defer しない）
         items.append({
             "finding_id": x["id"],
             "decision": "defer" if info_default else None,
@@ -157,7 +173,7 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
     pol = inp["policy"]
     by_id = {x["id"]: x for x in f["findings"]}
     errmods = errored_modules(f)
-    approvers = set(pol["approvers"])
+    approvers = {a.casefold() for a in pol["approvers"]}  # 人名は ASCII。大文字小文字の違いで別人扱いしない
     now = now or dt.datetime.now(dt.timezone.utc)
     v = _timestamp_violations(plan)
     if v:
@@ -230,7 +246,7 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
             v.append(Violation("I-5", "skillpact.divergence が非空の finding は exception にできません", fid))
         if not it["decided_by"] or not it["decided_at"]:
             v.append(Violation("I-3", "decided_by と decided_at は必須です", fid))
-        appr = sorted(set(it["approved_by"]))
+        appr = sorted({a.casefold() for a in it["approved_by"]})
         if len(appr) != len(it["approved_by"]):
             v.append(Violation("I-6", "approved_by に重複があります", fid))
         unknown = [a for a in appr if a not in approvers]
@@ -240,7 +256,7 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
         if len(appr) < need:
             code = "I-6" if x.get("skillpact") and x["skillpact"]["diff_anomaly"] else "I-3"
             v.append(Violation(code, f"承認者が {need} 名以上必要です（現在 {len(appr)} 名）", fid))
-        if it["decided_by"] and it["decided_by"] in appr:
+        if it["decided_by"] and it["decided_by"].casefold() in appr:
             v.append(Violation("I-3", "判断者本人が承認者に含まれています（自己承認）", fid))
         if d == "exception":
             if it["exception_type"] is None:
@@ -251,6 +267,12 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
                 v.append(Violation("I-3", "exception には recheck_at が必要です", fid))
         elif it["exception_type"] is not None:
             v.append(Violation("I-3", "exception 以外で exception_type が設定されています", fid))
+        if d == "defer" and lv != "INFO":
+            # 期限も理由も無い defer は承認の要らない無期限の例外になる。INFO 以外は reason と recheck_at を必須にする
+            if not (it["reason"] or "").strip():
+                v.append(Violation("I-3", "defer（level_effective が INFO 以外）には reason が必要です", fid))
+            if not it["recheck_at"]:
+                v.append(Violation("I-9", "defer（level_effective が INFO 以外）には recheck_at が必要です", fid))
         if d == "remediate":
             if not (it["owner"] or "").strip():
                 v.append(Violation("I-4", "remediate には owner が必要です", fid))
@@ -262,6 +284,7 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
             v.append(Violation("I-4", "remediate 以外で action が設定されています", fid))
         a = it["action"]
         if a is not None:
+            v += _action_shape_violations(a, fid)
             rev = REVERSIBLE_BY_TYPE.get(a["type"], False)
             if "reversible" in a and a["reversible"] != rev:
                 v.append(Violation("I-4", f"action.reversible は操作種別 {a['type']} から {rev} と決まります", fid))
@@ -306,6 +329,8 @@ def _deadline_violations(it: dict, d: str, lv: str, pol: dict, created: dt.datet
         rc = parse_ts(it["recheck_at"])
         if rc > dec + dt.timedelta(days=pol["decision_window_days"]):
             v.append(Violation("I-9", f"recheck_at が判断ウィンドウ（{pol['decision_window_days']} 日）を超えています", fid))
+        if rc < dec:
+            v.append(Violation("I-9", "recheck_at が判断日より前です", fid))
     return v
 
 

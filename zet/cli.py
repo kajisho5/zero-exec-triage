@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import json
+import os
 import re
 import sys
 
 from . import audit, triage
-from .core import ContractError, canonical, fmt_ts, load_json, now_utc, sha256, write_atomic
+from .core import ContractError, canonical, dumps_pretty, fmt_ts, load_json, now_utc, sha256, write_text_atomic
 
 EXIT_OK, EXIT_CONTRACT, EXIT_USAGE, EXIT_INTERNAL = 0, 3, 64, 70
 _PERSON = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")
@@ -39,7 +39,7 @@ def _parser() -> argparse.ArgumentParser:
         if plan:
             s.add_argument("plan")
         s.add_argument("--operator", required=True, help="実行者（監査ログに記録。自己申告ではなく明示指定）")
-        s.add_argument("--now", help="現在時刻の上書き（RFC 3339 UTC、テスト用）")
+        s.add_argument("--now", help="現在時刻の上書き（RFC 3339 UTC。テスト専用: ZET_ALLOW_NOW_OVERRIDE=1 が必要）")
         if name == "draft":
             s.add_argument("--plan-id")
             s.add_argument("-o", "--output")
@@ -54,6 +54,39 @@ def _report(violations) -> None:
         print(f"  {v.code}{fid}: {v.message}", file=sys.stderr)
 
 
+def _output_problem(out: str, sources: list[str]) -> str | None:
+    """-o の事前検証。処理（と監査ログの記録）の前に、書き出せない出力先を弾く。"""
+    if not out:
+        return "-o が空です"
+    try:
+        if os.path.isdir(out):
+            return f"-o がディレクトリです: {out}"
+        if os.path.exists(out) and not os.path.isfile(out):
+            return f"-o が通常ファイルではありません: {out}"  # /dev/full など。os.replace で置き換えない
+        parent = os.path.dirname(os.path.abspath(out))
+        if not os.path.isdir(parent):
+            return f"-o のディレクトリがありません: {parent}"
+        if not os.access(parent, os.W_OK | os.X_OK):
+            return f"-o のディレクトリに書き込めません: {parent}"
+        for src in sources:
+            if os.path.realpath(out) == os.path.realpath(src) or (
+                    os.path.exists(out) and os.path.exists(src) and os.path.samefile(out, src)):
+                return f"-o が入力ファイルと同じです: {out}"
+    except (OSError, ValueError) as e:  # ValueError: パスに NUL を含む
+        return f"-o を検査できません（{e}）"
+    return None
+
+
+def _discard_stdout() -> None:
+    """書き出せなかった標準出力のバッファを終了時に再送しない（終了時の例外と終了コード 120 を防ぐ）。"""
+    try:
+        fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(fd, sys.stdout.fileno())
+        os.close(fd)
+    except (OSError, ValueError):
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if not _PERSON.fullmatch(args.operator):
@@ -61,6 +94,10 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_USAGE
     if getattr(args, "plan_id", None) and not _UUID.fullmatch(args.plan_id):
         print("zet: --plan-id は UUID（小文字）で指定してください", file=sys.stderr)
+        return EXIT_USAGE
+    if args.now is not None and os.environ.get("ZET_ALLOW_NOW_OVERRIDE") != "1":
+        # --now は I-9 の「decided_at <= 現在時刻」の上限を動かせるため、本番では受け付けない
+        print("zet: --now はテスト専用です（ZET_ALLOW_NOW_OVERRIDE=1 のときだけ使えます）", file=sys.stderr)
         return EXIT_USAGE
     try:
         now = now_utc(args.now)
@@ -73,9 +110,17 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as e:
         print(f"zet: {e}（記録できないため実行しません）", file=sys.stderr)
         return EXIT_USAGE
+    out = getattr(args, "output", None)
+    if out is not None:
+        problem = _output_problem(out, [args.input] + ([args.plan] if hasattr(args, "plan") else []))
+        if problem:
+            print(f"zet: {problem}", file=sys.stderr)
+            return EXIT_USAGE
 
     started = fmt_ts(now_utc(None))
     record = {"command": args.command, "operator": args.operator, "started_at": started}
+    if args.now is not None:
+        record["now_override"] = True
     output_obj = None
     violations = []
     code = EXIT_OK
@@ -108,8 +153,31 @@ def main(argv: list[str] | None = None) -> int:
         print(f"zet {args.command}: 契約違反 {len(violations)} 件", file=sys.stderr)
         _report(violations)
         output_obj = None
+    # 出力は先に文字列にしてから書き出し、書き出せた場合だけ監査ログに ok と output_hash を残す
+    text = out_hash = None
     if code == EXIT_OK and output_obj is not None:
-        record["output_hash"] = sha256(canonical(output_obj))
+        try:
+            text = dumps_pretty(output_obj)
+            out_hash = sha256(canonical(output_obj))
+        except (RecursionError, ValueError) as e:
+            print(f"zet: 出力を JSON にできません（{type(e).__name__}。入れ子が深すぎる可能性があります）", file=sys.stderr)
+            code = EXIT_INTERNAL
+    written = False
+    if code == EXIT_OK and text is not None:
+        try:
+            if out:
+                write_text_atomic(out, text)
+            else:
+                sys.stdout.write(text)
+                sys.stdout.flush()
+            written = True
+        except OSError as e:
+            print(f"zet: 出力を書き出せません（{e}）", file=sys.stderr)
+            if not out:
+                _discard_stdout()
+            code = EXIT_USAGE
+    if written:
+        record["output_hash"] = out_hash
         if args.command == "finalize":
             record["plan_id"] = output_obj["plan_id"]
             record["plan_hash"] = output_obj["plan_hash"]
@@ -119,15 +187,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         audit.append(record)
     except OSError as e:
-        print(f"zet: 監査ログに記録できません（{e}）。出力を破棄します", file=sys.stderr)
-        return EXIT_USAGE
-    if code == EXIT_OK and output_obj is not None:
-        out = getattr(args, "output", None)
-        if out:
-            write_atomic(out, output_obj)
+        if written and out:
+            try:
+                os.unlink(out)  # 記録の無い出力を残さない
+            except OSError:
+                pass
+            print(f"zet: 監査ログに記録できません（{e}）。出力を削除しました", file=sys.stderr)
+        elif written:
+            print(f"zet: 監査ログに記録できません（{e}）。標準出力の内容は使わないでください", file=sys.stderr)
         else:
-            json.dump(output_obj, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False)
-            sys.stdout.write("\n")
+            print(f"zet: 監査ログに記録できません（{e}）", file=sys.stderr)
+        return EXIT_USAGE
     if code == EXIT_OK:
         print(f"zet {args.command}: OK", file=sys.stderr)
     return code

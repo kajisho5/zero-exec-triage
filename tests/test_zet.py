@@ -5,7 +5,10 @@ import copy
 import hashlib
 import io
 import json
+import errno
 import os
+import stat
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -25,6 +28,14 @@ from zet.core import (
 
 FIX = ROOT / "tests" / "fixtures"
 NOW = parse_ts("2026-10-22T10:00:00Z")
+
+
+def setUpModule():
+    os.environ["ZET_ALLOW_NOW_OVERRIDE"] = "1"  # --now はテスト専用
+
+
+def tearDownModule():
+    os.environ.pop("ZET_ALLOW_NOW_OVERRIDE", None)
 
 
 def load(name: str) -> dict:
@@ -513,6 +524,219 @@ class TestRegressions(unittest.TestCase):
             audit.append({"command": "validate"})
         self.assertEqual(target.read_bytes(), b"")
         self.assertEqual(self.run_cli("validate", str(self.d / "in.json"), "--operator", "alice")[0], 64)
+
+
+class TestRegressionsR2(unittest.TestCase):
+    """bughunt-r2 で見つかった不具合の回帰テスト。"""
+
+    setUp = TestRegressions.setUp
+    tearDown = TestRegressions.tearDown
+    run_cli = TestCliAndAudit.run_cli
+
+    # 4. 重複キーは I-11（後勝ちで黙って値が変わらない）
+    def test_duplicate_keys_rejected(self):
+        raw = json.dumps(self.plan).replace('"decision": "remediate"', '"decision": "remediate", "decision": "exception"', 1)
+        (self.d / "plan.json").write_text(raw, encoding="utf-8")
+        with self.assertRaises(ContractError) as cm:
+            load_json(str(self.d / "plan.json"))
+        self.assertEqual(codes(cm.exception.violations), {"I-11"})
+        self.assertEqual(self.run_cli("check", str(self.d / "in.json"), str(self.d / "plan.json"), "--operator", "alice")[0], 3)
+
+    # 7a. 深すぎる入れ子は I-11（終了コード 3）で、内部エラー（70）にしない
+    def test_deeply_nested_input_is_contract_error(self):
+        (self.d / "deep.json").write_text("[" * 100000 + "]" * 100000, encoding="utf-8")
+        with self.assertRaises(ContractError) as cm:
+            load_json(str(self.d / "deep.json"))
+        self.assertEqual(codes(cm.exception.violations), {"I-11"})
+        self.assertEqual(self.run_cli("validate", str(self.d / "deep.json"), "--operator", "alice")[0], 3)
+
+    # 6. draft の自動 defer は level_effective で判断する（引き上げられた INFO を defer にしない）
+    def test_draft_does_not_auto_defer_elevated_info(self):
+        inp = make_input()
+        x = next(f for f in inp["findings"]["findings"] if f.get("skillpact") and f["skillpact"]["signed"] and f["skillpact"]["divergence"])
+        x["level"] = "INFO"  # L3 署名済みで乖離があるため CRITICAL に引き上がる
+        self.assertEqual(triage.validate_input(inp), [])
+        it = next(i for i in triage.draft(inp, NOW, "alice")["items"] if i["finding_id"] == x["id"])
+        self.assertEqual(it["level_effective"], "CRITICAL")
+        self.assertEqual((it["decision"], it["decided_by"], it["reason"]), (None, None, None))
+        self.assertEqual(it["due_at"], "2026-10-29T10:00:00Z")
+
+    # 5. 人名の比較は大文字小文字を区別しない（自己承認・承認者数・policy.approvers）
+    def test_person_names_compared_casefolded(self):
+        by_id = {x["id"]: x for x in self.inp["findings"]["findings"]}
+        sp = {i["finding_id"]: by_id[i["finding_id"]]["skillpact"] for i in self.plan["items"]}
+        it = next(i for i in self.plan["items"] if not sp[i["finding_id"]]["divergence"] and not sp[i["finding_id"]]["diff_anomaly"])
+        it.update(decision="exception", action=None, exception_type="risk_accepted", reason="mitigated", decided_by="Alice", approved_by=["alice"])
+        self.assertIn("I-3", codes(triage.check(self.inp, self.plan)))  # 自己承認
+        it.update(decided_by="bob", approved_by=["Security-Lead"])
+        self.assertEqual(triage.check(self.inp, self.plan), [])  # policy.approvers の security-lead と同一人物
+        an = next(i for i in self.plan["items"] if sp[i["finding_id"]]["diff_anomaly"])
+        an["approved_by"] = ["alice", "ALICE"]
+        v = [x for x in triage.check(self.inp, self.plan) if x.finding_id == an["finding_id"]]
+        self.assertIn("承認者が 2 名以上必要です（現在 1 名）", [x.message for x in v])
+
+    # 2. INFO 以外の defer は reason と recheck_at（判断ウィンドウ内）が必須（無期限・無承認の例外にしない）
+    def test_defer_requires_reason_and_recheck_at(self):
+        by_id = {x["id"]: x for x in self.inp["findings"]["findings"]}
+        it = next(i for i in self.plan["items"] if triage.level_effective(by_id[i["finding_id"]]) == "CRITICAL"
+                  and by_id[i["finding_id"]]["skillpact"]["divergence"])
+        it.update(decision="defer", action=None, owner=None, due_at=None, reason="waiting for vendor fix", recheck_at=None)
+        self.assertIn("I-9", codes(triage.check(self.inp, self.plan)))
+        with self.assertRaises(ContractError):
+            triage.finalize(self.inp, self.plan)
+        it.update(recheck_at="2026-10-21T00:00:00Z")  # 判断日より前
+        self.assertIn("I-9", codes(triage.check(self.inp, self.plan)))
+        it.update(recheck_at="2026-10-30T10:00:00Z", reason="  ")
+        self.assertIn("I-3", codes(triage.check(self.inp, self.plan)))
+        it.update(reason="waiting for vendor fix")
+        self.assertEqual(triage.check(self.inp, self.plan), [])
+        # level_effective が INFO の defer は従来どおり reason / recheck_at なしで通る
+        inp = make_input("findings-partial.json")
+        plan = fill(inp, triage.draft(inp, NOW, "alice"))
+        info = next(i for i in plan["items"] if i["level_effective"] == "INFO")
+        info.update(reason=None, recheck_at=None)
+        self.assertEqual(triage.check(inp, plan), [])
+
+    # 8. GER が必ず拒否する action（正規化されていない target、chmod の不正な params）は確定させない
+    def test_action_shape_matches_ger(self):
+        it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
+        for target in ("/a/./b", "/a//b", "/a/../b", "/a/b/", "/..", "/a/."):
+            p = copy.deepcopy(self.plan)
+            next(i for i in p["items"] if i["finding_id"] == it["finding_id"])["action"]["target"] = target
+            self.assertIn("I-4", codes(triage.check(self.inp, p)), target)
+            with self.assertRaises(ContractError):
+                triage.finalize(self.inp, p)
+        for params in ({"mode": "644"}, {"mode": "04755"}, {"mode": "0644\n"}, {"mode": 420}, {"mode": "0644", "x": 1}, {}):
+            p = copy.deepcopy(self.plan)
+            next(i for i in p["items"] if i["finding_id"] == it["finding_id"])["action"]["params"] = params
+            self.assertIn("I-4", codes(triage.check(self.inp, p)), params)
+        it["action"].update(target="/srv/app/config.yml", params={"mode": "0644"})
+        self.assertEqual(triage.check(self.inp, self.plan), [])
+        triage.finalize(self.inp, self.plan)
+
+    # 3. --now は ZET_ALLOW_NOW_OVERRIDE=1 のときだけ。使った場合は監査ログに now_override を残す
+    def test_now_override_requires_env_and_is_audited(self):
+        args = ("validate", str(self.d / "in.json"), "--operator", "alice", "--now", "2026-10-22T10:00:00Z")
+        os.environ.pop("ZET_ALLOW_NOW_OVERRIDE")
+        try:
+            code, _, err = self.run_cli(*args)
+            self.assertEqual(code, 64)
+            self.assertIn("テスト専用", err)
+            self.assertFalse(audit.log_path().exists())
+            self.assertEqual(self.run_cli(*args[:4])[0], 0)
+        finally:
+            os.environ["ZET_ALLOW_NOW_OVERRIDE"] = "1"
+        self.assertEqual(self.run_cli(*args)[0], 0)
+        recs = [json.loads(line) for line in audit.log_path().read_text().splitlines()]
+        self.assertEqual([r.get("now_override") for r in recs], [None, True])
+
+    # 7b. 既存のログディレクトリがグループ・他者から書き込み可能、または他人の所有なら拒否（64）
+    def test_log_dir_permissions_checked(self):
+        logd = self.d / "log"
+        logd.mkdir(mode=0o700)
+        args = ("validate", str(self.d / "in.json"), "--operator", "alice")
+        self.assertEqual(self.run_cli(*args)[0], 0)
+        for mode in (0o777, 0o720, 0o702):
+            os.chmod(logd, mode)
+            self.assertEqual(self.run_cli(*args)[0], 64, oct(mode))
+        os.chmod(logd, 0o755)
+        self.assertEqual(self.run_cli(*args)[0], 0)
+        if os.geteuid() == 0:
+            os.chown(logd, 12345, -1)
+            self.assertEqual(self.run_cli(*args)[0], 64)
+            os.chown(logd, 0, -1)
+        self.assertEqual(len(audit.log_path().read_text().splitlines()), 2)
+
+    def audit_records(self) -> list[dict]:
+        p = audit.log_path()
+        return [json.loads(line) for line in p.read_text().splitlines()] if p.exists() else []
+
+    # 1. -o は処理の前に検査する（ディレクトリ・存在しないディレクトリ・通常ファイル以外・入力と同じファイル）
+    def test_output_path_validated_before_work(self):
+        d = self.d
+        (d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
+        os.link(d / "plan.json", d / "hard.json")
+        (d / "sym.json").symlink_to(d / "in.json")
+        os.mkfifo(d / "fifo")
+        before = {n: (d / n).read_bytes() for n in ("in.json", "plan.json")}
+        for out in (str(d), str(d / "nodir" / "x.json"), str(d / "fifo"), str(d / "in.json"), str(d / "plan.json"),
+                    str(d / "hard.json"), str(d / "sym.json"), str(d / "." / "in.json"), ""):
+            code, _, err = self.run_cli("finalize", str(d / "in.json"), str(d / "plan.json"), "--operator", "alice", "-o", out)
+            self.assertEqual(code, 64, out)
+            self.assertNotIn("Traceback", err)
+        self.assertEqual(self.run_cli("draft", str(d / "in.json"), "--operator", "alice", "-o", str(d / "in.json"))[0], 64)
+        self.assertEqual({n: (d / n).read_bytes() for n in before}, before)
+        self.assertTrue(stat_is_fifo(d / "fifo"))
+        self.assertEqual(self.audit_records(), [])
+
+    # 1. 書き出しに失敗したら監査ログは ok にしない（output_hash / plan_hash も残さない）
+    def test_output_write_failure_not_audited_as_ok(self):
+        d = self.d
+        (d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
+        args = ("finalize", str(d / "in.json"), str(d / "plan.json"), "--operator", "alice", "-o", str(d / "final.json"))
+
+        def enospc(*a, **k):
+            raise OSError(errno.ENOSPC, "No space left on device")
+        orig = cli.write_text_atomic
+        cli.write_text_atomic = enospc
+        try:
+            self.assertEqual(self.run_cli(*args)[0], 64)
+        finally:
+            cli.write_text_atomic = orig
+        self.assertFalse((d / "final.json").exists())
+
+        class FullStdout(io.StringIO):
+            def write(self, s):
+                raise OSError(errno.ENOSPC, "No space left on device")
+        err = io.StringIO()
+        with redirect_stdout(FullStdout()), redirect_stderr(err):
+            self.assertEqual(cli.main(["draft", str(d / "in.json"), "--operator", "alice"]), 64)
+        self.assertNotIn("Traceback", err.getvalue())
+
+        orig = cli.dumps_pretty
+        cli.dumps_pretty = lambda obj: (_ for _ in ()).throw(RecursionError("maximum recursion depth exceeded"))
+        try:
+            self.assertEqual(self.run_cli(*args)[0], 70)
+        finally:
+            cli.dumps_pretty = orig
+        self.assertFalse((d / "final.json").exists())
+        recs = self.audit_records()
+        self.assertEqual([r["result"] for r in recs], ["error", "error", "error"])
+        self.assertTrue(all("output_hash" not in r and "plan_hash" not in r for r in recs))
+        self.assertEqual(self.run_cli(*args)[0], 0)
+        rec = self.audit_records()[-1]
+        self.assertEqual((rec["result"], rec["output_hash"]), ("ok", "sha256:" + hashlib.sha256(
+            canonical(json.loads((d / "final.json").read_text()))).hexdigest()))
+
+    def test_stdout_enospc_via_dev_full(self):
+        if not os.path.exists("/dev/full"):
+            self.skipTest("/dev/full がありません")
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "ZET_LOG_DIR": str(self.d / "log")}
+        with open("/dev/full", "w") as full:
+            r = subprocess.run([str(ROOT / "bin" / "zet"), "draft", str(self.d / "in.json"), "--operator", "alice"],
+                               stdout=full, stderr=subprocess.PIPE, env=env, timeout=60)
+        self.assertEqual(r.returncode, 64, r.stderr.decode())
+        self.assertNotIn(b"Traceback", r.stderr)
+        self.assertEqual([x["result"] for x in self.audit_records()], ["error"])
+
+    # 1. 入れ子の深い params: 出力できたときだけ ok（Python の版により成功するか 70 になる）
+    def test_deep_params_audit_matches_output(self):
+        it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
+        it["action"] = {"type": "write_config", "target": "/srv/app/config", "params": {"deep": "DEEP"}}
+        n = 3000
+        (self.d / "plan.json").write_text(json.dumps(self.plan).replace('"DEEP"', '{"a":' * n + "{}" + "}" * n), encoding="utf-8")
+        code, _, err = self.run_cli("finalize", str(self.d / "in.json"), str(self.d / "plan.json"),
+                                    "--operator", "alice", "-o", str(self.d / "final.json"))
+        self.assertIn(code, (0, 3, 70), err)
+        self.assertNotIn("Traceback", err)
+        rec = self.audit_records()[-1]
+        self.assertEqual((self.d / "final.json").exists(), code == 0)
+        self.assertEqual(rec["result"] == "ok", code == 0)
+        self.assertEqual("output_hash" in rec, code == 0)
+
+
+def stat_is_fifo(p) -> bool:
+    return stat.S_ISFIFO(os.lstat(p).st_mode)
 
 
 if __name__ == "__main__":

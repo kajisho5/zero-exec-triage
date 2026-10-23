@@ -79,11 +79,16 @@ def load_json(path: str) -> Any:
     with open(path, "rb") as f:
         raw = f.read()
     try:
-        obj = json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, parse_float=_finite_float)
+        obj = json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, parse_float=_finite_float,
+                         object_pairs_hook=_no_duplicate_keys)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as e:
         raise ContractError([Violation("I-11", f"{path}: JSON として解析できません（{e}）")]) from e
+    except RecursionError:
+        raise ContractError([Violation("I-11", f"{path}: JSON の入れ子が深すぎます")]) from None
     try:
         canonical(obj)
+    except RecursionError:
+        raise ContractError([Violation("I-11", f"{path}: JSON の入れ子が深すぎます")]) from None
     except (UnicodeEncodeError, ValueError):
         # 対になっていないサロゲート（\ud800 など）は正規化 JSON にできない。内容は表示しない
         raise ContractError([Violation("I-11", f"{path}: UTF-8 で表せない文字列（不正なサロゲート）を含みます")]) from None
@@ -94,6 +99,16 @@ def _reject_constant(name: str) -> Any:
     raise ValueError(f"非標準の JSON 定数 {name} は受け付けません")
 
 
+def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:
+    # 重複キーは後勝ちで黙って消える（読む側ごとに解釈が割れる）ため拒否する。キー名は表示しない
+    d: dict = {}
+    for k, val in pairs:
+        if k in d:
+            raise ValueError("重複したキーがあります")
+        d[k] = val
+    return d
+
+
 def _finite_float(s: str) -> float:
     x = float(s)
     if not math.isfinite(x):  # 1e400 など。書き出すと Infinity（不正な JSON）になる
@@ -101,14 +116,22 @@ def _finite_float(s: str) -> float:
     return x
 
 
+def dumps_pretty(obj: Any) -> str:
+    """出力ファイル・標準出力の書式。深すぎる入れ子は RecursionError、有限でない数値は ValueError。"""
+    return json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n"
+
+
 def write_atomic(path: str, obj: Any) -> None:
+    write_text_atomic(path, dumps_pretty(obj))
+
+
+def write_text_atomic(path: str, text: str) -> None:
     """一時ファイルに書いてから os.replace。途中で失敗しても部分ファイルを残さない。"""
     d = os.path.dirname(os.path.abspath(path)) or "."
     fd, tmp = tempfile.mkstemp(prefix=".zet-", suffix=".tmp", dir=d)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False)
-            f.write("\n")
+            f.write(text)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)

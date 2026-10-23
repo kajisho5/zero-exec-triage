@@ -30,6 +30,12 @@ def ensure_writable() -> None:
     """記録できない操作はしない。ディレクトリ作成と書き込み可否を事前に確かめる。"""
     d = log_dir()
     d.mkdir(mode=0o700, parents=True, exist_ok=True)
+    st = os.stat(d)
+    # 他人が書けるディレクトリではログの差し替え・削除を防げない（既存ディレクトリも検査する）
+    if st.st_uid != os.geteuid():
+        raise PermissionError(f"監査ログのディレクトリの所有者が実行ユーザーではありません: {d}")
+    if st.st_mode & 0o022:
+        raise PermissionError(f"監査ログのディレクトリがグループ・他者から書き込み可能です: {d}")
     if not os.access(d, os.W_OK):
         raise PermissionError(f"監査ログに書き込めません: {d}")
 
