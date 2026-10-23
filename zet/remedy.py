@@ -23,6 +23,14 @@ _T = {
         ("侵害版がインストール・実行された可能性があれば CL-SECRET を実施する", True),
         ("ZES で再スキャンし、この finding が消えたことを確かめる", True),
     ],
+    "CL-LOCKFILE": [
+        ("この作業ツリーで npm ci / npm install / yarn install / pnpm install を実行しない（ロックファイルが侵害版を再び取得する）。対象: {path}", True),
+        ("~/.npmrc に ignore-scripts=true を設定する", True),
+        ("依存を取り除いてから（npm uninstall {pkg}。yarn remove / pnpm remove）、または安全版に固定してから（npm install {pkg}@<安全版> --ignore-scripts）、秘密情報の無い隔離環境でロックファイルを再生成する。GER はロックファイルを書き換えない。node_modules の実体を隔離してもこの finding は残り、作業者が再生成して完了にする", True),  # noqa: E501
+        ("npm ls {pkg} で、侵害版が node_modules にもロックファイルにも残っていないことを確かめる", True),
+        ("侵害版がインストール・実行された可能性があれば CL-SECRET を実施する", True),
+        ("ZES で再スキャンし、この finding が消えたことを確かめる", True),
+    ],
     "CL-VENV": [
         ("侵害版・脆弱版を含む仮想環境（site-packages）を使うプロセスを止め、仮想環境ごと作り直す（RECORD が無いため GER は安全に隔離できない）。対象: {path}", True),
         ("新しい仮想環境では安全版を指定してインストールする（pip install --require-hashes など）", True),
@@ -117,17 +125,23 @@ _T = {
 TEMPLATES = frozenset(_T)
 
 
-def checklist(template: str, path: str | None) -> dict:
-    steps = [{"id": f"s{i}", "text": t.replace("{path}", path or "（path なし）"), "blocking": b}
+def checklist(template: str, path: str | None, pkg: str | None = None) -> dict:
+    """{path} は finding の path、{pkg} は findings 1.1 の subject.package（無ければ <name>）に置き換える。"""
+    steps = [{"id": f"s{i}", "text": t.replace("{path}", path or "（path なし）").replace("{pkg}", pkg or "<name>"), "blocking": b}
              for i, (t, b) in enumerate(_T[template], 1)]
     return {"template": template, "steps": steps}
 
 
-def template_ok(cl: dict, path: str | None) -> bool:
+def pkg_of(f: dict) -> str | None:
+    s = f.get("subject")
+    return s["package"] if isinstance(s, dict) and isinstance(s.get("package"), str) and s["package"] else None
+
+
+def template_ok(cl: dict, path: str | None, pkg: str | None = None) -> bool:
     """雛形の手順がすべて（同じ id・同じ文言で）含まれていること。手順を足すのは構わない。"""
     if cl.get("template") not in _T:
         return False
-    want = checklist(cl["template"], path)["steps"]
+    want = checklist(cl["template"], path, pkg)["steps"]
     have = {(s.get("id"), s.get("text"), s.get("blocking")) for s in cl.get("steps", [])}
     return all((s["id"], s["text"], s["blocking"]) in have for s in want)
 
@@ -145,6 +159,9 @@ def root_required(path: str | None) -> bool:
 LOCKFILES = {"package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock"}
 PKG_MANIFESTS = LOCKFILES | {"Gemfile.lock", "Cargo.lock", "composer.lock", "go.sum", "poetry.lock", "Pipfile.lock",
                              "uv.lock", "pyproject.toml", "Pipfile", "Gemfile", "Cargo.toml", "go.mod", "composer.json"}
+# ロックファイル（依存の版を固定するファイル）。この finding は node_modules などの実体を隔離しても消えない
+LOCKFILE_NAMES = LOCKFILES | {"Gemfile.lock", "Cargo.lock", "composer.lock", "go.sum", "poetry.lock", "Pipfile.lock", "uv.lock",
+                              "deno.lock"}
 MCP_JSON = {".mcp.json", "mcp.json", "mcp_config.json", ".claude.json", "claude_desktop_config.json"}
 SHELL_RC = {".bashrc", ".bash_profile", ".bash_login", ".profile", ".zshrc", ".zprofile", ".zshenv", ".zlogin",
             ".kshrc", ".mkshrc", ".envrc"}
@@ -199,7 +216,7 @@ def lexical_relation(relation: str, target: str | None, fp: str | None, related:
 KIND_ACTIONS = {
     "pkg.compromised": {"quarantine", "checklist"},
     "pkg.vulnerable": {"checklist"},
-    "pkg.lockfile_compromised": {"quarantine", "checklist"},
+    "pkg.lockfile_compromised": {"checklist"},  # §9.6: 実体の隔離は node_modules/<name>/package.json の finding で行う
     "mcp.dangerous_command": {"disable_mcp_server", "edit_json", "edit_toml", "checklist"},
     "mcp.unpinned": {"disable_mcp_server", "checklist"},
     "gha.unpinned": {"checklist"},
@@ -207,6 +224,18 @@ KIND_ACTIONS = {
     "secret.token": {"checklist"},
     "runtime.cve": {"checklist"},
 }
+
+
+def is_lockfile_finding(f: dict) -> bool:
+    """I-13（§9.6）: ロックファイルの finding（findings 1.1 の kind pkg.lockfile_compromised、または §15 のロックファイル）。
+    ZES はロックファイルの中身を見て報告するため、インストール済みの実体（node_modules/<name>）を隔離しても消えない。
+    ロックファイルを直すのは作業者（再生成・安全版への固定）で、GER は書き換えない。自動修復とは数えず checklist だけにする。"""
+    return f.get("kind") == "pkg.lockfile_compromised" or (f["module"] == "§15" and _b(f["path"]) in LOCKFILE_NAMES)
+
+
+def lockfile_template(f: dict) -> str:
+    s = f.get("subject") if isinstance(f.get("subject"), dict) else {}
+    return "CL-LOCKFILE" if _b(f["path"]) in LOCKFILES or s.get("ecosystem") == "npm" else "CL-PKG"
 
 
 # --- 提案 ---------------------------------------------------------------------------------------
@@ -223,7 +252,7 @@ def _act(type_, target, relation, fp, params=None, followup=()):
 
 def _cl(template, f):
     p = f["path"]
-    return _act("checklist", p, "self" if p else "none", p, checklist(template, p))
+    return _act("checklist", p, "self" if p else "none", p, checklist(template, p, pkg_of(f)))
 
 
 def _q(f, relation="self", target=None, fu=()):
@@ -257,6 +286,12 @@ def classify(f: dict) -> tuple[list[dict], str | None]:
         else:
             autos.append(_q(f, fu=("CL-IR", "CL-SECRET")))
         cl = "CL-IR"
+    elif m == "§15" and is_lockfile_finding(f):
+        # §9.6: related npm_installed があっても auto にしない。実体の隔離は node_modules/<name>/package.json の
+        # finding（pkg.compromised）の quarantine npm_pkg_dir が行う（ZES はインストール済みの版が侵害版なら別に報告する）
+        cl = lockfile_template(f)
+        if any(r.get("relation") == "npm_installed" for r in f.get("related") or []):
+            note = "node_modules の実体を隔離してもロックファイルの finding は再生成まで残る（作業者が checklist で完了にする）"
     elif m == "§15":
         parts = p.split("/")
         if b == "package.json" and "node_modules" in parts[:-1]:
@@ -270,10 +305,6 @@ def classify(f: dict) -> tuple[list[dict], str | None]:
         elif b.endswith(".egg-info"):
             cl = "CL-VENV"
         elif b in PKG_MANIFESTS or re.fullmatch(r"requirements[\w.-]*\.txt", b):
-            for r in f.get("related") or []:
-                if r.get("relation") == "npm_installed":
-                    autos.append(_act("quarantine", r["path"], "npm_installed", p, {}, ("CL-PKG", "CL-SECRET")))
-                    note = "node_modules を隔離してもロックファイルの finding は再生成まで残る"
             cl = "CL-PKG"
         elif b == "package.json":
             autos.append(_act("edit_json", p, "self", p, {"select": "npm.lifecycle"}, _ir(f)))
@@ -387,7 +418,7 @@ def suggest_all(findings: list[dict]) -> dict[str, list[dict]]:
         if t == "quarantine":  # 隔離はファイル・ツリーごと移すので、同じ対象の他の finding もまとめて消える（編集は消えない）
             by_target.setdefault(tgt, []).append((t, fids))
     for x in findings:
-        if any(s["label"] == "auto" for s in sug[x["id"]]):
+        if any(s["label"] == "auto" for s in sug[x["id"]]) or is_lockfile_finding(x):
             continue
         for rel, tgt in candidate_targets(x):
             for t, fids in by_target.get(tgt, []):
@@ -395,7 +426,7 @@ def suggest_all(findings: list[dict]) -> dict[str, list[dict]]:
                 a = dict(src["action"], relation=rel, finding_path=x["path"])
                 a = {k: v for k, v in a.items() if k != "followup"}
                 if src["action"].get("followup"):
-                    a["followup"] = [checklist(c["template"], x["path"]) for c in src["action"]["followup"]]
+                    a["followup"] = [checklist(c["template"], x["path"], pkg_of(x)) for c in src["action"]["followup"]]
                 sug[x["id"]].insert(0, {"label": "auto", "action": a,
                                         "note": "同じ対象を他の finding の自動修復が扱うため、同じ group にまとめる"})
                 fids.append(x["id"])
