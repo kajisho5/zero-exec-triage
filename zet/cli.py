@@ -88,9 +88,9 @@ def main(argv: list[str] | None = None) -> int:
             plan = load_json(args.plan)
             record["plan_input_hash"] = sha256(canonical(plan))
             if args.command == "check":
-                violations = triage.check(inp, plan)
+                violations = triage.check(inp, plan, now=now)
             else:
-                output_obj = triage.finalize(inp, plan)
+                output_obj = triage.finalize(inp, plan, now=now)
     except ContractError as e:
         violations = e.violations
     except OSError as e:

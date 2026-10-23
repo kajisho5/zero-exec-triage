@@ -122,7 +122,7 @@ def draft(inp: dict, now: dt.datetime, operator: str, plan_id: str | None = None
 
 
 # --- 不変条件チェック（zet check） -----------------------------------------
-def check(inp: dict, plan: Any, final: bool = False) -> list[Violation]:
+def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = None) -> list[Violation]:
     """I-1〜I-12。未記入の decision も違反として返す。final=True は確定 plan（finalize の出力 / GER 入力）として検査する。
 
     plan_hash を持つ plan は確定 plan なので、final の指定にかかわらず確定 plan として検査する
@@ -138,6 +138,8 @@ def check(inp: dict, plan: Any, final: bool = False) -> list[Violation]:
     by_id = {x["id"]: x for x in f["findings"]}
     errmods = errored_modules(f)
     approvers = set(pol["approvers"])
+    now = now or dt.datetime.now(dt.timezone.utc)
+    created = parse_ts(plan["created_at"])
 
     # I-1 / I-2 / I-10: 全 finding がちょうど 1 回、items か held に現れる
     seen: dict[str, str] = {}
@@ -233,6 +235,11 @@ def check(inp: dict, plan: Any, final: bool = False) -> list[Violation]:
         # I-9: 期限
         if it["decided_at"]:
             dec = parse_ts(it["decided_at"])
+            # 判断日は期限の起点。未来や plan 作成前の日付で期限を引き延ばせないようにする
+            if dec < created:
+                v.append(Violation("I-9", "decided_at が plan の created_at より前です", fid))
+            if dec > now:
+                v.append(Violation("I-9", "decided_at が現在時刻より後です", fid))
             days = pol["deadlines"].get(lv)
             if it["due_at"]:
                 due = parse_ts(it["due_at"])
@@ -255,8 +262,8 @@ def check(inp: dict, plan: Any, final: bool = False) -> list[Violation]:
 
 
 # --- 確定（zet finalize） --------------------------------------------------
-def finalize(inp: dict, plan: dict) -> dict:
-    v = check(inp, plan)
+def finalize(inp: dict, plan: dict, now: dt.datetime | None = None) -> dict:
+    v = check(inp, plan, now=now)
     if v:
         raise ContractError(v)
     by_id = {x["id"]: x for x in inp["findings"]["findings"]}
@@ -278,7 +285,7 @@ def finalize(inp: dict, plan: dict) -> dict:
         "held": plan["held"],
     }
     final["plan_hash"] = plan_hash(final)
-    v = check(inp, final, final=True)
+    v = check(inp, final, final=True, now=now)
     if v:
         raise ContractError(v)
     return final

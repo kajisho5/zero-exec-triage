@@ -426,6 +426,24 @@ class TestRegressions(unittest.TestCase):
         self.assertIn("RuntimeError", err)
         self.assertLess(len(err), 400)
 
+    # 5. decided_at は created_at 以上・現在時刻以下（未来の判断日で I-9 の期限を延ばせない）
+    def test_decided_at_bounded(self):
+        it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
+        it.update(decided_at="2030-01-01T00:00:00Z", due_at="2030-01-05T00:00:00Z")
+        self.assertIn("I-9", codes(triage.check(self.inp, self.plan, now=NOW)))
+        it.update(decided_at="2026-10-21T00:00:00Z", due_at="2026-10-22T00:00:00Z")  # created_at より前
+        self.assertIn("I-9", codes(triage.check(self.inp, self.plan, now=NOW)))
+        it.update(decided_at="2026-10-22T10:00:00Z", due_at="2026-10-23T00:00:00Z")
+        self.assertEqual(triage.check(self.inp, self.plan, now=NOW), [])
+        it.update(decided_at="2026-10-22T11:00:00Z")
+        with self.assertRaises(ContractError):
+            triage.finalize(self.inp, self.plan, now=NOW)
+        (self.d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
+        self.assertEqual(self.run_cli("check", str(self.d / "in.json"), str(self.d / "plan.json"),
+                                      "--operator", "alice", "--now", "2026-10-22T10:30:00Z")[0], 3)
+        self.assertEqual(self.run_cli("check", str(self.d / "in.json"), str(self.d / "plan.json"),
+                                      "--operator", "alice", "--now", "2026-10-22T11:00:00Z")[0], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
