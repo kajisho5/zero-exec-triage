@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import sys
 
@@ -39,7 +40,7 @@ def _parser() -> argparse.ArgumentParser:
         if plan:
             s.add_argument("plan")
         s.add_argument("--operator", required=True, help="実行者（監査ログに記録。自己申告ではなく明示指定）")
-        s.add_argument("--now", help="現在時刻の上書き（RFC 3339 UTC、テスト用）")
+        s.add_argument("--now", help="現在時刻の上書き（RFC 3339 UTC。テスト専用: ZET_ALLOW_NOW_OVERRIDE=1 が必要）")
         if name == "draft":
             s.add_argument("--plan-id")
             s.add_argument("-o", "--output")
@@ -62,6 +63,10 @@ def main(argv: list[str] | None = None) -> int:
     if getattr(args, "plan_id", None) and not _UUID.fullmatch(args.plan_id):
         print("zet: --plan-id は UUID（小文字）で指定してください", file=sys.stderr)
         return EXIT_USAGE
+    if args.now is not None and os.environ.get("ZET_ALLOW_NOW_OVERRIDE") != "1":
+        # --now は I-9 の「decided_at <= 現在時刻」の上限を動かせるため、本番では受け付けない
+        print("zet: --now はテスト専用です（ZET_ALLOW_NOW_OVERRIDE=1 のときだけ使えます）", file=sys.stderr)
+        return EXIT_USAGE
     try:
         now = now_utc(args.now)
         now + dt.timedelta(days=triage.MAX_DAYS)  # 期限の計算が範囲外になる時刻は受け付けない
@@ -76,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
 
     started = fmt_ts(now_utc(None))
     record = {"command": args.command, "operator": args.operator, "started_at": started}
+    if args.now is not None:
+        record["now_override"] = True
     output_obj = None
     violations = []
     code = EXIT_OK

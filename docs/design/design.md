@@ -165,7 +165,7 @@ class Constraints: allowed: frozenset[Decision]; min_approvers: int; level_effec
 | `approved_by` に同一人物が重複 | 重複除去後に人数判定（I-6） |
 | `decided_by` が `approved_by` に含まれる exception | I-3 違反（自己承認） |
 | ZES の `schema_version` が 1.0 以外 | 拒否（版固定） |
-| `--now` 未指定 | 実時刻（UTC）。テストは常に `--now` 固定 |
+| `--now` 未指定 | 実時刻（UTC）。`--now` はテスト専用（`ZET_ALLOW_NOW_OVERRIDE=1` が必要、監査ログに `now_override: true`）。テストは常に `--now` 固定 |
 | 巨大入力（数万件） | 線形処理。ID の重複検出は dict で O(n) |
 
 ---

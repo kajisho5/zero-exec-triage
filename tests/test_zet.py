@@ -27,6 +27,14 @@ FIX = ROOT / "tests" / "fixtures"
 NOW = parse_ts("2026-10-22T10:00:00Z")
 
 
+def setUpModule():
+    os.environ["ZET_ALLOW_NOW_OVERRIDE"] = "1"  # --now はテスト専用
+
+
+def tearDownModule():
+    os.environ.pop("ZET_ALLOW_NOW_OVERRIDE", None)
+
+
 def load(name: str) -> dict:
     return json.loads((FIX / name).read_text(encoding="utf-8"))
 
@@ -602,6 +610,22 @@ class TestRegressionsR2(unittest.TestCase):
         it["action"].update(target="/srv/app/config.yml", params={"mode": "0644"})
         self.assertEqual(triage.check(self.inp, self.plan), [])
         triage.finalize(self.inp, self.plan)
+
+    # 3. --now は ZET_ALLOW_NOW_OVERRIDE=1 のときだけ。使った場合は監査ログに now_override を残す
+    def test_now_override_requires_env_and_is_audited(self):
+        args = ("validate", str(self.d / "in.json"), "--operator", "alice", "--now", "2026-10-22T10:00:00Z")
+        os.environ.pop("ZET_ALLOW_NOW_OVERRIDE")
+        try:
+            code, _, err = self.run_cli(*args)
+            self.assertEqual(code, 64)
+            self.assertIn("テスト専用", err)
+            self.assertFalse(audit.log_path().exists())
+            self.assertEqual(self.run_cli(*args[:4])[0], 0)
+        finally:
+            os.environ["ZET_ALLOW_NOW_OVERRIDE"] = "1"
+        self.assertEqual(self.run_cli(*args)[0], 0)
+        recs = [json.loads(line) for line in audit.log_path().read_text().splitlines()]
+        self.assertEqual([r.get("now_override") for r in recs], [None, True])
 
 
 if __name__ == "__main__":
