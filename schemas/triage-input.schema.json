@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/kajisho5/zero-exec-triage/schemas/triage-input.schema.json",
   "title": "ZET triage-input.json",
-  "description": "ZET（判断層）の入力。findings は ZES の findings.schema.json（schemas/vendor、版固定）で別途検証する。未知フィールドは拒否（strict）。",
+  "description": "Input of ZET (decision layer). findings is validated separately with the ZES findings.schema.json (schemas/vendor, pinned version). Unknown fields are rejected (strict).",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "findings", "policy", "skillpact_policy"],
   "properties": {
     "schema_version": { "const": "1.0" },
-    "findings": { "type": "object", "description": "ZES findings.json 全体" },
+    "findings": { "type": "object", "description": "The whole ZES findings.json" },
     "policy": {
       "type": "object",
       "additionalProperties": false,
@@ -32,7 +32,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["roots"],
-          "description": "承認する検査範囲（plan.scope になる。GER の G-9）。roots は ZES の --root、home は ZES_HOME。findings 1.1 に scan_roots があればそちらを roots に使う。ファイルを変える action にはどちらかが必要",
+          "description": "The scan scope being approved (becomes plan.scope; GER G-9). roots is the ZES --root, home is ZES_HOME. When findings 1.1 has scan_roots, those are used as roots. Actions that change files need one of the two",
           "properties": {
             "roots": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^/" } },
             "home": { "type": ["string", "null"], "pattern": "^/" }
@@ -45,9 +45,9 @@
       "additionalProperties": false,
       "required": ["l3_trusted"],
       "properties": {
-        "l3_trusted": { "type": "boolean", "description": "true は契約違反として拒否する（L3 署名を信頼根拠にしない）" },
-        "diff_anomaly_threshold": { "type": "number", "minimum": 0, "maximum": 1, "description": "予約（未実装）。指定すると zet validate が拒否する（ZES の diff_anomaly は真偽値で、しきい値を当てる値が無い）" },
-        "destructive_requires_human": { "type": "boolean", "description": "予約（未実装）。指定すると zet validate が拒否する（ZET は判断者が人間か AI かを区別できない）" }
+        "l3_trusted": { "type": "boolean", "description": "true is rejected as a contract violation (an L3 signature is not a basis for trust)" },
+        "diff_anomaly_threshold": { "type": "number", "minimum": 0, "maximum": 1, "description": "Reserved (not implemented). zet validate rejects it (the ZES diff_anomaly is a boolean, so there is no value to apply a threshold to)" },
+        "destructive_requires_human": { "type": "boolean", "description": "Reserved (not implemented). zet validate rejects it (ZET cannot tell whether the decision maker is a person or an AI)" }
       }
     }
   },
