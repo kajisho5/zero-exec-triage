@@ -56,12 +56,12 @@ def fill(inp: dict, plan: dict) -> dict:
     """下書きを「全件 remediate（できないものは defer）」で埋めた合格計画にする。"""
     by_id = {x["id"]: x for x in inp["findings"]["findings"]}
     p = copy.deepcopy(plan)
-    for it in p["items"]:
+    for n, it in enumerate(p["items"]):
         x = by_id[it["finding_id"]]
         if it["decision"] is None:
             it["decision"] = "remediate"
             it["owner"] = "team-a"
-            it["action"] = {"type": "chmod", "target": "/srv/target", "params": {"mode": "0600"}}
+            it["action"] = {"type": "chmod", "target": f"/srv/target-{n}", "params": {"mode": "0600"}}
         it["decided_by"] = it["decided_by"] or "bob"
         it["decided_at"] = it["decided_at"] or "2026-10-22T10:00:00Z"
         if x.get("skillpact") and x["skillpact"]["diff_anomaly"]:
@@ -719,7 +719,7 @@ class TestRegressionsR2(unittest.TestCase):
         self.assertNotIn(b"Traceback", r.stderr)
         self.assertEqual([x["result"] for x in self.audit_records()], ["error"])
 
-    # 1. 入れ子の深い params: 出力できたときだけ ok（Python の版により成功するか 70 になる）
+    # 1. 入れ子の深い params: 出力できたときだけ ok（現在は 64 段を超えるため読み込み時に I-11 で 3 になる）
     def test_deep_params_audit_matches_output(self):
         it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
         it["action"] = {"type": "write_config", "target": "/srv/app/config", "params": {"deep": "DEEP"}}
@@ -733,6 +733,135 @@ class TestRegressionsR2(unittest.TestCase):
         self.assertEqual((self.d / "final.json").exists(), code == 0)
         self.assertEqual(rec["result"] == "ok", code == 0)
         self.assertEqual("output_hash" in rec, code == 0)
+
+
+class TestRegressionsR3(unittest.TestCase):
+    """bughunt-r3 で見つかった不具合の回帰テスト。"""
+
+    setUp = TestRegressions.setUp
+    tearDown = TestRegressions.tearDown
+    run_cli = TestCliAndAudit.run_cli
+    audit_records = TestRegressionsR2.audit_records
+
+    # 1. -o に監査ログ（とそのディレクトリ内）は指定できない。verify_chain は object 以外の行で落ちない
+    def test_output_cannot_replace_audit_log(self):
+        d = self.d
+        (d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
+        args = ("validate", str(d / "in.json"), "--operator", "alice")
+        self.assertEqual(self.run_cli(*args)[0], 0)
+        log = audit.log_path()
+        os.link(log, d / "hard-log")
+        (d / "sym-log").symlink_to(log)
+        (d / "sym-dir").symlink_to(audit.log_dir())
+        before = log.read_bytes()
+        for out in (str(log), str(d / "log" / "." / "zet-audit.jsonl"), str(d / "hard-log"), str(d / "sym-log"),
+                    str(d / "log" / "other.json"), str(d / "sym-dir" / "x.json"), str(d / "log")):
+            code, _, err = self.run_cli("finalize", str(d / "in.json"), str(d / "plan.json"), "--operator", "alice", "-o", out)
+            self.assertEqual(code, 64, out)
+            self.assertNotIn("Traceback", err)
+        self.assertEqual(self.run_cli("draft", str(d / "in.json"), "--operator", "alice", "-o", str(log))[0], 64)
+        self.assertEqual(log.read_bytes(), before)
+        self.assertEqual(audit.verify_chain(), [])
+        with open(log, "ab") as f:
+            f.write(b"[1, 2]\n\"str\"\n\xff\n")
+        problems = audit.verify_chain()
+        self.assertEqual(len(problems), 3, problems)
+
+    # 2. 末尾の / と、与えられたパスのままの親ディレクトリを処理の前に検査する（書き出し時に失敗させない）
+    def test_output_trailing_slash_and_parent_as_given(self):
+        d = self.d
+        (d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
+        (d / "existing.json").write_text("{}", encoding="utf-8")
+        for out in (str(d / "nd") + "/", str(d / "existing.json") + "/", str(d / "nd" / ".." / "x.json"),
+                    str(d / "existing.json" / ".." / "x.json")):
+            code, _, err = self.run_cli("finalize", str(d / "in.json"), str(d / "plan.json"), "--operator", "alice", "-o", out)
+            self.assertEqual(code, 64, out)
+            self.assertNotIn("出力を書き出せません", err)
+            self.assertEqual(self.run_cli("draft", str(d / "in.json"), "--operator", "alice", "-o", out)[0], 64, out)
+        self.assertEqual(self.audit_records(), [])
+        self.assertEqual((d / "existing.json").read_text(), "{}")
+        self.assertFalse((d / "x.json").exists())
+        cwd = os.getcwd()
+        os.chdir(d)
+        try:
+            self.assertEqual(self.run_cli("draft", "in.json", "--operator", "alice", "-o", "rel.json")[0], 0)
+        finally:
+            os.chdir(cwd)
+        self.assertTrue((d / "rel.json").exists())
+
+    # 3. 先頭の // は normpath で残るが GER は拒否する。// はどこにあっても I-4
+    def test_target_with_leading_double_slash_rejected(self):
+        it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
+        for target in ("//tmp/x/t", "//", "//srv"):
+            p = copy.deepcopy(self.plan)
+            next(i for i in p["items"] if i["finding_id"] == it["finding_id"])["action"]["target"] = target
+            self.assertIn("I-4", codes(triage.check(self.inp, p)), target)
+            with self.assertRaises(ContractError):
+                triage.finalize(self.inp, p)
+
+    # 4. UTF-8 でないロケール（ASCII）でも標準出力の JSON は UTF-8 のまま書き、例外にしない
+    def test_non_utf8_locale_stdout(self):
+        inp = make_input("findings-partial.json")  # errors[].module に非 ASCII 文字（§）を含む
+        (self.d / "partial.json").write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
+        (self.d / "bad.json").write_text("{}", encoding="utf-8")
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "ZET_LOG_DIR": str(self.d / "log"),
+               "LC_ALL": "C", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0"}
+        # bin/zet は python3 -I（C ロケールでは UTF-8 モードになる）ため、ロケールの影響を受ける形で直接起動する
+        cmd = ["python3", str(ROOT / "zet" / "__main__.py")]
+        probe = subprocess.run(cmd[:1] + ["-c", "import sys; print(sys.stdout.encoding)"], env=env,
+                               capture_output=True, text=True, timeout=60)
+        if probe.stdout.strip().lower() not in ("ascii", "ansi_x3.4-1968", "us-ascii"):
+            self.skipTest(f"ASCII ロケールを再現できません（{probe.stdout.strip()}）")
+        r = subprocess.run(cmd + ["draft", str(self.d / "partial.json"), "--operator", "alice"],
+                           env=env, capture_output=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr.decode("utf-8", "replace"))
+        self.assertNotIn(b"Traceback", r.stderr)
+        out = json.loads(r.stdout.decode("utf-8"))
+        self.assertIn("§", json.dumps(out["held"], ensure_ascii=False))
+        r = subprocess.run(cmd + ["validate", str(self.d / "bad.json"), "--operator", "alice"],
+                           env=env, capture_output=True, timeout=60)
+        self.assertEqual(r.returncode, 3)
+        self.assertNotIn(b"Traceback", r.stderr)
+        self.assertEqual([x["result"] for x in self.audit_records()], ["ok", "rejected"])
+
+    # 5a. remediate の action.target が重複する計画は GER が拒否するため確定させない（I-4）
+    def test_duplicate_action_target_rejected(self):
+        rem = [i for i in self.plan["items"] if i["decision"] == "remediate"]
+        self.assertGreaterEqual(len(rem), 2)
+        rem[1]["action"]["target"] = rem[0]["action"]["target"]
+        v = triage.check(self.inp, self.plan)
+        self.assertEqual([(x.code, x.finding_id) for x in v], [("I-4", rem[1]["finding_id"])])
+        with self.assertRaises(ContractError):
+            triage.finalize(self.inp, self.plan)
+
+    # 5b. GER の操作レジストリに無い種別（write_config など）は確定させない（I-4）
+    def test_unsupported_action_type_rejected(self):
+        it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
+        for t, params in (("write_config", {"mode": "0600"}), ("rotate_secret", {}), ("chmodx", {"mode": "0600"})):
+            p = copy.deepcopy(self.plan)
+            next(i for i in p["items"] if i["finding_id"] == it["finding_id"])["action"].update(type=t, params=params)
+            self.assertIn("I-4", codes(triage.check(self.inp, p)), t)
+            with self.assertRaises(ContractError):
+                triage.finalize(self.inp, p)
+
+    # 5c. GER と同じく 64 段を超える入れ子は I-11（GER が読めない文書を確定させない）
+    def test_nesting_depth_limit_matches_ger(self):
+        for depth, ok in ((64, True), (65, False)):
+            (self.d / "deep.json").write_text("[" * depth + "]" * depth, encoding="utf-8")
+            if ok:
+                load_json(str(self.d / "deep.json"))
+                continue
+            with self.assertRaises(ContractError) as cm:
+                load_json(str(self.d / "deep.json"))
+            self.assertEqual(codes(cm.exception.violations), {"I-11"})
+        it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
+        it["action"]["params"] = {"mode": "0600", "x": "DEEP"}
+        (self.d / "plan.json").write_text(json.dumps(self.plan).replace('"DEEP"', "[" * 70 + "]" * 70), encoding="utf-8")
+        code, _, err = self.run_cli("finalize", str(self.d / "in.json"), str(self.d / "plan.json"),
+                                    "--operator", "alice", "-o", str(self.d / "final.json"))
+        self.assertEqual(code, 3)
+        self.assertIn("I-11", err)
+        self.assertFalse((self.d / "final.json").exists())
 
 
 def stat_is_fifo(p) -> bool:

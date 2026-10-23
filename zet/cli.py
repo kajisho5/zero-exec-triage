@@ -61,9 +61,12 @@ def _output_problem(out: str, sources: list[str]) -> str | None:
     try:
         if os.path.isdir(out):
             return f"-o がディレクトリです: {out}"
+        if out.endswith(("/", os.sep)):  # 存在しないディレクトリ・ファイルの後ろの / は書き出し時まで失敗しない
+            return f"-o の末尾に / は付けられません: {out}"
         if os.path.exists(out) and not os.path.isfile(out):
             return f"-o が通常ファイルではありません: {out}"  # /dev/full など。os.replace で置き換えない
-        parent = os.path.dirname(os.path.abspath(out))
+        # 親は与えられたパスのまま調べる（abspath は nd/../x の nd が無いことを隠す）
+        parent = os.path.dirname(out) or "."
         if not os.path.isdir(parent):
             return f"-o のディレクトリがありません: {parent}"
         if not os.access(parent, os.W_OK | os.X_OK):
@@ -72,6 +75,14 @@ def _output_problem(out: str, sources: list[str]) -> str | None:
             if os.path.realpath(out) == os.path.realpath(src) or (
                     os.path.exists(out) and os.path.exists(src) and os.path.samefile(out, src)):
                 return f"-o が入力ファイルと同じです: {out}"
+        # 監査ログ（とそのディレクトリ）を出力で置き換えるとハッシュチェーンが壊れる
+        log, logd = os.path.realpath(audit.log_path()), os.path.realpath(audit.log_dir())
+        if os.path.realpath(out) == log or (
+                os.path.exists(out) and os.path.exists(log) and os.path.samefile(out, log)):
+            return f"-o に監査ログは指定できません: {out}"
+        for p in (os.path.realpath(out), os.path.realpath(parent)):
+            if p == logd or os.path.commonpath([p, logd]) == logd:
+                return f"-o に監査ログのディレクトリ内は指定できません: {out}"
     except (OSError, ValueError) as e:  # ValueError: パスに NUL を含む
         return f"-o を検査できません（{e}）"
     return None
@@ -87,7 +98,29 @@ def _discard_stdout() -> None:
         pass
 
 
+def _harden_streams() -> None:
+    """UTF-8 でないロケールでも人向けのメッセージで UnicodeEncodeError を起こさない（符号化方式は変えない）。"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):  # StringIO などの差し替え先
+            pass
+
+
+def _write_stdout(text: str) -> None:
+    """機械可読な JSON はロケールにかかわらず UTF-8 のバイト列で書く（ensure_ascii=False のため）。"""
+    buf = getattr(sys.stdout, "buffer", None)
+    if buf is None:  # テストなどで文字列ストリームに差し替えられている
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        return
+    sys.stdout.flush()
+    buf.write(text.encode("utf-8"))
+    buf.flush()
+
+
 def main(argv: list[str] | None = None) -> int:
+    _harden_streams()
     args = _parser().parse_args(argv)
     if not _PERSON.fullmatch(args.operator):
         print("zet: --operator の形式が不正です", file=sys.stderr)
@@ -168,8 +201,7 @@ def main(argv: list[str] | None = None) -> int:
             if out:
                 write_text_atomic(out, text)
             else:
-                sys.stdout.write(text)
-                sys.stdout.flush()
+                _write_stdout(text)
             written = True
         except OSError as e:
             print(f"zet: 出力を書き出せません（{e}）", file=sys.stderr)

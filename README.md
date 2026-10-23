@@ -38,7 +38,7 @@ bin/zet finalize triage-input.json plan.draft.json --operator alice -o remediati
 | `check` | Checks invariants I-1 to I-12 |
 | `finalize` | Writes the finalized plan (with `plan_hash`) only if every check passes |
 
-Exit codes: `0` pass / `3` contract violation / `64` usage or environment error (including `-o` being a directory, not a regular file, the same file as an input, or in an unwritable location, and failure to write the output) / `70` internal error (including when the output cannot be serialized to JSON). `-o` is checked before any processing. Options: `--now` (pins the current time; test-only, accepted only when the environment variable `ZET_ALLOW_NOW_OVERRIDE=1` is set, otherwise `64`) and `--plan-id` (draft).
+Exit codes: `0` pass / `3` contract violation / `64` usage or environment error (including `-o` being a directory, not a regular file, the same file as an input, the audit log or a path inside the audit log directory, or in an unwritable location, and failure to write the output) / `70` internal error (including when the output cannot be serialized to JSON). `-o` is checked before any processing (a path ending with `/` is rejected, and the parent directory is checked as given). Options: `--now` (pins the current time; test-only, accepted only when the environment variable `ZET_ALLOW_NOW_OVERRIDE=1` is set, otherwise `64`) and `--plan-id` (draft). JSON written to `-o` or standard output is always UTF-8 regardless of the locale; messages on standard error fall back to `\uXXXX`-style escapes when the locale cannot encode them.
 
 See [SKILL.md](SKILL.md) for the detailed procedure and how to write decisions, and [docs/design/design.md](docs/design/design.md) for the design.
 
@@ -49,14 +49,14 @@ See [SKILL.md](SKILL.md) for the detailed procedure and how to write decisions, 
 | I-1 | Every finding in the input appears exactly once in either items or held, and every decision in items is filled in |
 | I-2 | No finding_id that does not exist in the input |
 | I-3 | An exception requires exception_type, reason, recheck_at, and approval by someone other than the decider (names are compared case-insensitively). A defer also requires a reason unless level_effective is INFO. decided_by / decided_at are mandatory |
-| I-4 | A remediate requires owner, due_at and action. action.target is a normalized absolute path (no `.`, `..` or repeated `/`); chmod params are only `{"mode": "0NNN"}` (no special bits) — the same acceptance rules as GER. action.reversible / skillpact_effects match the derived values |
+| I-4 | A remediate requires owner, due_at and action. action.target is a normalized absolute path (no `.`, `..` or repeated `/` anywhere, including a leading `//`); action.type is one GER can execute (currently only `chmod`); no two remediate items share the same action.target; chmod params are only `{"mode": "0NNN"}` (no special bits) — the same acceptance rules as GER. action.reversible / skillpact_effects match the derived values |
 | I-5 | A finding with a non-empty skillpact.divergence cannot be an exception |
 | I-6 | A skillpact.diff_anomaly finding needs at least 2 approvers (duplicates and names differing only in case count as one) |
 | I-7 | A finding that is L3-signed and has a divergence has level_effective = CRITICAL (cannot be lowered) |
 | I-8 | Approvers must be in policy.approvers (case-insensitive) |
 | I-9 | due_at is within decision date + deadlines[level_effective] days; recheck_at is mandatory for exception and for defer (when level_effective is not INFO), and must be on or after the decision date and within the decision window. The decision date (decided_at) is on or after created_at and no later than the time of execution |
 | I-10 | Findings from modules listed in errors[] go to held (they are not passed to GER). held may be used only for modules in errors[] |
-| I-11 | Strict schema (rejects unknown fields, duplicate keys, excessive nesting, invalid timestamps, non-finite numbers and invalid surrogates). For a plan that carries plan_hash, check / finalize also verify plan_hash |
+| I-11 | Strict schema (rejects unknown fields, duplicate keys, nesting deeper than GER's 64-level limit, invalid timestamps, non-finite numbers and invalid surrogates). For a plan that carries plan_hash, check / finalize also verify plan_hash |
 | I-12 | If the input is partial, the plan is partial too, and modules in errors[] are held module by module |
 
 ## Schemas

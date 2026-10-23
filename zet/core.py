@@ -21,6 +21,9 @@ DECISIONS = ("remediate", "exception", "defer")
 RISKY_EFFECTS = ("exec", "network", "secrets")
 # 操作種別ごとの可逆性（A-4）。未知の種別は不可逆として扱う（安全側）
 REVERSIBLE_BY_TYPE = {"chmod": True, "write_config": False, "rotate_secret": False}
+# GER の操作レジストリ（ger/actions/__init__.py の REGISTRY）にある種別。これ以外は GER が G-5 で拒否する（I-4）
+GER_ACTION_TYPES = frozenset({"chmod"})
+MAX_DEPTH = 64  # GER（ger/core.py）と同じ入れ子の上限。GER が読めない文書を確定させない（I-11）
 
 
 class ContractError(Exception):
@@ -85,6 +88,8 @@ def load_json(path: str) -> Any:
         raise ContractError([Violation("I-11", f"{path}: JSON として解析できません（{e}）")]) from e
     except RecursionError:
         raise ContractError([Violation("I-11", f"{path}: JSON の入れ子が深すぎます")]) from None
+    if _too_deep(obj):
+        raise ContractError([Violation("I-11", f"{path}: JSON の入れ子が深すぎます（最大 {MAX_DEPTH} 段）")])
     try:
         canonical(obj)
     except RecursionError:
@@ -93,6 +98,18 @@ def load_json(path: str) -> Any:
         # 対になっていないサロゲート（\ud800 など）は正規化 JSON にできない。内容は表示しない
         raise ContractError([Violation("I-11", f"{path}: UTF-8 で表せない文字列（不正なサロゲート）を含みます")]) from None
     return obj
+
+
+def _too_deep(obj: Any) -> bool:
+    """GER の _check_depth と同じ数え方（最上位の object / array が 1 段目）。再帰しない。"""
+    stack = [(obj, 1)]
+    while stack:
+        cur, depth = stack.pop()
+        if isinstance(cur, (dict, list)):
+            if depth > MAX_DEPTH:
+                return True
+            stack.extend((x, depth + 1) for x in (cur.values() if isinstance(cur, dict) else cur))
+    return False
 
 
 def _reject_constant(name: str) -> Any:
@@ -127,7 +144,7 @@ def write_atomic(path: str, obj: Any) -> None:
 
 def write_text_atomic(path: str, text: str) -> None:
     """一時ファイルに書いてから os.replace。途中で失敗しても部分ファイルを残さない。"""
-    d = os.path.dirname(os.path.abspath(path)) or "."
+    d = os.path.dirname(path) or "."  # -o の事前検査（cli._output_problem）と同じ親ディレクトリ
     fd, tmp = tempfile.mkstemp(prefix=".zet-", suffix=".tmp", dir=d)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
