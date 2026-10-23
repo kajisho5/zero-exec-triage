@@ -539,6 +539,17 @@ class TestRegressionsR2(unittest.TestCase):
         self.assertEqual(codes(cm.exception.violations), {"I-11"})
         self.assertEqual(self.run_cli("validate", str(self.d / "deep.json"), "--operator", "alice")[0], 3)
 
+    # 6. draft の自動 defer は level_effective で判断する（引き上げられた INFO を defer にしない）
+    def test_draft_does_not_auto_defer_elevated_info(self):
+        inp = make_input()
+        x = next(f for f in inp["findings"]["findings"] if f.get("skillpact") and f["skillpact"]["signed"] and f["skillpact"]["divergence"])
+        x["level"] = "INFO"  # L3 署名済みで乖離があるため CRITICAL に引き上がる
+        self.assertEqual(triage.validate_input(inp), [])
+        it = next(i for i in triage.draft(inp, NOW, "alice")["items"] if i["finding_id"] == x["id"])
+        self.assertEqual(it["level_effective"], "CRITICAL")
+        self.assertEqual((it["decision"], it["decided_by"], it["reason"]), (None, None, None))
+        self.assertEqual(it["due_at"], "2026-10-29T10:00:00Z")
+
 
 if __name__ == "__main__":
     unittest.main()

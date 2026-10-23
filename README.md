@@ -30,7 +30,7 @@ bin/zet finalize triage-input.json plan.draft.json --operator alice -o remediati
 | コマンド | 内容 |
 |---|---|
 | `validate` | 入力のスキーマ検証。`findings.status == "error"`、`l3_trusted: true` は拒否 |
-| `draft` | 下書き生成。未確定モジュールの held 化、SkillPact による重大度の引き上げ、期限計算。decision は空のまま（INFO のみ defer を既定値） |
+| `draft` | 下書き生成。未確定モジュールの held 化、SkillPact による重大度の引き上げ、期限計算。decision は空のまま（level_effective が INFO のものだけ defer を既定値） |
 | `check` | 不変条件 I-1〜I-12 の検査 |
 | `finalize` | 全合格時のみ確定 plan（`plan_hash` 付き）を書き出す |
 

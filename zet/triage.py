@@ -112,7 +112,7 @@ def draft(inp: dict, now: dt.datetime, operator: str, plan_id: str | None = None
             continue
         lv = level_effective(x)
         days = pol["deadlines"].get(lv)
-        info_default = x["level"] == "INFO"
+        info_default = lv == "INFO"  # 引き上げ後の重大度で判断する（INFO → CRITICAL を自動 defer しない）
         items.append({
             "finding_id": x["id"],
             "decision": "defer" if info_default else None,
