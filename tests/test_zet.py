@@ -159,7 +159,10 @@ class TestDraft(unittest.TestCase):
 
     def test_draft_never_decides(self):
         plan = triage.draft(make_input(), NOW, "alice")
-        self.assertTrue(all(it["decision"] is None for it in plan["items"]))
+        # level_effective が INFO のものだけ defer が既定値。それ以外は判断しない
+        self.assertTrue(any(it["level_effective"] == "INFO" for it in plan["items"]))
+        for it in plan["items"]:
+            self.assertEqual(it["decision"], "defer" if it["level_effective"] == "INFO" else None)
 
 
 class TestInvariants(unittest.TestCase):
@@ -238,7 +241,8 @@ class TestInvariants(unittest.TestCase):
         self.assertViolates("I-7")
 
     def test_i9_deadline(self):
-        it = self.item(lambda x: x["level"] == "CRITICAL")
+        # ZES の §49 は CRITICAL を出さない（署名で重大度を変えない）。ZET が引き上げた CRITICAL で確認する
+        it = self.item(lambda x: triage.level_effective(x) == "CRITICAL")
         it["due_at"] = "2026-12-31T00:00:00Z"
         self.assertViolates("I-9")
 
@@ -272,7 +276,9 @@ class TestFinalize(unittest.TestCase):
         self.assertEqual(final["plan_hash"], plan_hash(final))
         self.assertTrue(all("constraints" not in it for it in final["items"]))
         by_id = {x["id"]: x for x in inp["findings"]["findings"]}
-        for it in final["items"]:
+        remediate = [it for it in final["items"] if it["decision"] == "remediate"]
+        self.assertTrue(remediate)
+        for it in remediate:
             a = it["action"]
             self.assertTrue(a["reversible"])
             sp = by_id[it["finding_id"]].get("skillpact")

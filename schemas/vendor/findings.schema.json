@@ -19,7 +19,7 @@
   "$defs": {
     "rfc3339_utc": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
     "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
-    "effect": { "enum": ["exec", "network", "write", "read", "secrets", "spend", "persist", "longrun"] },
+    "effect": { "enum": ["read", "write", "network", "exec", "spend", "send"], "description": "SkillPact 0.8 の 6 効果（spec §6）" },
     "finding": {
       "type": "object",
       "additionalProperties": false,
@@ -45,13 +45,13 @@
       "properties": {
         "contract_path": { "type": ["string", "null"], "pattern": "^/" },
         "contract_version": { "type": ["string", "null"] },
-        "level": { "type": ["string", "null"], "description": "契約が宣言した値（L1/L2/L3 以外は ZES が MEDIUM で報告）" },
-        "signed": { "type": "boolean", "description": "署名ファイルの存在のみ。信頼の根拠にしない" },
-        "author": { "type": ["string", "null"] },
-        "declared_effects": { "type": "array", "items": { "type": "string" }, "uniqueItems": true, "description": "契約が宣言したエフェクトの基底名（スコープ除去）。未知の値もそのまま転記する" },
+        "level": { "type": ["string", "null"], "description": "ZES が確認できた水準。ZES の部分検査に合格した契約のみ \"L1\"、それ以外は null。契約の自己申告は使わない。L2/L3 は ZES では判定しない" },
+        "signed": { "type": "boolean", "description": "integrity.signatures[] があるか（ZES は署名を検証しない。信頼の根拠にしない）" },
+        "author": { "type": ["string", "null"], "description": "作者署名（role author）の鍵 ed25519:<b64> または sigstore:<issuer>|<identity>。未検証" },
+        "declared_effects": { "type": "array", "items": { "$ref": "#/$defs/effect" }, "uniqueItems": true, "description": "permissions.<effect>.level が none 以外の効果" },
         "observed_effects": { "type": "array", "items": { "$ref": "#/$defs/effect" }, "uniqueItems": true },
-        "policy_decision": { "type": ["string", "null"], "description": "allow/ask/deny。範囲外の値は ZES が MEDIUM で報告" },
-        "l2_tested": { "type": "boolean" },
+        "policy_decision": { "type": ["string", "null"], "description": "予約（ZES はポリシーの allow/ask/deny を評価しないため常に null）" },
+        "l2_tested": { "type": "boolean", "description": "予約（ZES はテストを実行・検証しないため常に false）" },
         "divergence": { "type": "array", "items": { "$ref": "#/$defs/effect" }, "uniqueItems": true },
         "diff_anomaly": { "type": "boolean" }
       }

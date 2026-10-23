@@ -65,7 +65,7 @@ ZES の findings を 1 件残らず「直す（remediate）／例外にする（
 | A-1 | plan の `status` に `"draft"` を追加（GER は `ok` 以外拒否） | 下書きが修復層へ流れるのを防ぐ |
 | A-2 | `items[].decided_by` を追加 | 不変条件「exception は **判断者以外** の `approved_by`」を機械的に検査するには判断者の記録が必要。現契約では検査不能 |
 | A-3 | `items[].level_effective` を追加（例: SkillPact 乖離で CRITICAL 相当に引き上げた値） | 入力の `level` は改変禁止のため、引き上げ後の重大度を別フィールドで持つ |
-| A-4 | `items[].action.reversible`（bool）と `items[].action.skillpact_effects`（配列）を追加 | GER は findings を読まない（飛び越し禁止）ため、「`reversible: false` は二重承認」「exec/network/secrets 宣言スキルの修復制限」を GER が判定する材料を plan で渡す必要がある |
+| A-4 | `items[].action.reversible`（bool）と `items[].action.skillpact_effects`（配列）を追加 | GER は findings を読まない（飛び越し禁止）ため、「`reversible: false` は二重承認」「exec/network/spend/send（SkillPact 0.8）宣言スキルの修復制限」を GER が判定する材料を plan で渡す必要がある |
 | A-5 | `held[]` に `module` を任意で追加（`finding_id` は `null` 可） | `errors[]` のモジュールは finding が 0 件のこともあり、finding 単位の held では「未確定」を表現できない |
 | A-6 | `plan_hash`（plan 本体の正規化 JSON の SHA-256）を出力に含める | GER の承認トークンを plan 内容に束縛し、承認後の差し替えを検出するため（GER 設計書 §4） |
 

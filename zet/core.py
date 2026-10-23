@@ -18,7 +18,9 @@ SCHEMAS = ROOT / "schemas"
 
 LEVELS = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 DECISIONS = ("remediate", "exception", "defer")
-RISKY_EFFECTS = ("exec", "network", "secrets")
+# 外部への副作用・コード実行を起こしうる SkillPact 0.8 の効果（GER の G-6 と同じ集合。ger/core.py と一致させる）。
+# read（機密ファイルの読み取りを含む。旧 secrets）と write（作業領域外への書き込みを含む。旧 persist）は単独では含めない
+RISKY_EFFECTS = ("exec", "network", "spend", "send")
 # 操作種別ごとの可逆性（A-4）。未知の種別は不可逆として扱う（安全側）
 REVERSIBLE_BY_TYPE = {"chmod": True, "write_config": False, "rotate_secret": False}
 # GER の操作レジストリ（ger/actions/__init__.py の REGISTRY）にある種別。これ以外は GER が G-5 で拒否する（I-4）

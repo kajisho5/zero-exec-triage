@@ -4,9 +4,9 @@
       "path": "schemas/vendor/findings.schema.json",
       "source_repo": "kajisho5/zero-exec-shield",
       "source_path": "schemas/findings.schema.json",
-      "source_commit": "bbf491d6f69915b0fc24f8e17d466bc826a4e4dc",
+      "source_commit": "7b75e7860cba531a86dc905ea53cdaabc4411b4a",
       "schema_version": "1.0",
-      "sha256": "6ee67a93f971bc71f02a2c7e37875391b21604dbb822f34ada7c2f785439a9d0"
+      "sha256": "e3cbf65579bc3a8d5b6d1527139b3927adc5efe0191df23095e876e63c20b2b2"
     }
   ]
 }
