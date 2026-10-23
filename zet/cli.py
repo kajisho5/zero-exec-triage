@@ -17,6 +17,7 @@ import sys
 
 from . import audit, triage
 from .core import ContractError, canonical, dumps_pretty, fmt_ts, load_json, now_utc, sha256, write_text_atomic
+from .jsonschema_lite import safe_text
 
 EXIT_OK, EXIT_CONTRACT, EXIT_USAGE, EXIT_INTERNAL = 0, 3, 64, 70
 _PERSON = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")
@@ -26,7 +27,7 @@ _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 class _Parser(argparse.ArgumentParser):
     def error(self, message: str) -> None:  # 終了コードを 64 に統一
         self.print_usage(sys.stderr)
-        print(f"zet: {message}", file=sys.stderr)
+        _err(f"zet: {message}")
         sys.exit(EXIT_USAGE)
 
 
@@ -48,10 +49,15 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
+def _err(text: str) -> None:
+    """標準エラー出力へ。入力由来の文字列（キー名・パス・例外の文言）を含みうるため制御文字をエスケープする。"""
+    print(safe_text(text), file=sys.stderr)
+
+
 def _report(violations) -> None:
     for v in violations:
         fid = f" [{v.finding_id}]" if v.finding_id else ""
-        print(f"  {v.code}{fid}: {v.message}", file=sys.stderr)
+        _err(f"  {v.code}{fid}: {v.message}")
 
 
 def _output_problem(out: str, sources: list[str]) -> str | None:
@@ -123,31 +129,31 @@ def main(argv: list[str] | None = None) -> int:
     _harden_streams()
     args = _parser().parse_args(argv)
     if not _PERSON.fullmatch(args.operator):
-        print("zet: --operator の形式が不正です", file=sys.stderr)
+        _err("zet: --operator の形式が不正です")
         return EXIT_USAGE
     if getattr(args, "plan_id", None) and not _UUID.fullmatch(args.plan_id):
-        print("zet: --plan-id は UUID（小文字）で指定してください", file=sys.stderr)
+        _err("zet: --plan-id は UUID（小文字）で指定してください")
         return EXIT_USAGE
     if args.now is not None and os.environ.get("ZET_ALLOW_NOW_OVERRIDE") != "1":
         # --now は I-9 の「decided_at <= 現在時刻」の上限を動かせるため、本番では受け付けない
-        print("zet: --now はテスト専用です（ZET_ALLOW_NOW_OVERRIDE=1 のときだけ使えます）", file=sys.stderr)
+        _err("zet: --now はテスト専用です（ZET_ALLOW_NOW_OVERRIDE=1 のときだけ使えます）")
         return EXIT_USAGE
     try:
         now = now_utc(args.now)
         now + dt.timedelta(days=triage.MAX_DAYS)  # 期限の計算が範囲外になる時刻は受け付けない
     except (ValueError, OverflowError):
-        print("zet: --now は YYYY-MM-DDTHH:MM:SSZ 形式で指定してください", file=sys.stderr)
+        _err("zet: --now は YYYY-MM-DDTHH:MM:SSZ 形式で指定してください")
         return EXIT_USAGE
     try:
         audit.ensure_writable()
     except OSError as e:
-        print(f"zet: {e}（記録できないため実行しません）", file=sys.stderr)
+        _err(f"zet: {e}（記録できないため実行しません）")
         return EXIT_USAGE
     out = getattr(args, "output", None)
     if out is not None:
         problem = _output_problem(out, [args.input] + ([args.plan] if hasattr(args, "plan") else []))
         if problem:
-            print(f"zet: {problem}", file=sys.stderr)
+            _err(f"zet: {problem}")
             return EXIT_USAGE
 
     started = fmt_ts(now_utc(None))
@@ -174,16 +180,16 @@ def main(argv: list[str] | None = None) -> int:
     except ContractError as e:
         violations = e.violations
     except OSError as e:
-        print(f"zet: {e}", file=sys.stderr)
+        _err(f"zet: {e}")
         code = EXIT_USAGE
     except Exception as e:  # 想定外は fail-closed（出力しない）
         # 例外の repr は入力文書全体を含みうるため、型名と短いメッセージだけを出す
-        print(f"zet: 内部エラー: {type(e).__name__}: {str(e)[:200]}", file=sys.stderr)
+        _err(f"zet: 内部エラー: {type(e).__name__}: {str(e)[:200]}")
         code = EXIT_INTERNAL
 
     if code == EXIT_OK and violations:
         code = EXIT_CONTRACT
-        print(f"zet {args.command}: 契約違反 {len(violations)} 件", file=sys.stderr)
+        _err(f"zet {args.command}: 契約違反 {len(violations)} 件")
         _report(violations)
         output_obj = None
     # 出力は先に文字列にしてから書き出し、書き出せた場合だけ監査ログに ok と output_hash を残す
@@ -193,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
             text = dumps_pretty(output_obj)
             out_hash = sha256(canonical(output_obj))
         except (RecursionError, ValueError) as e:
-            print(f"zet: 出力を JSON にできません（{type(e).__name__}。入れ子が深すぎる可能性があります）", file=sys.stderr)
+            _err(f"zet: 出力を JSON にできません（{type(e).__name__}。入れ子が深すぎる可能性があります）")
             code = EXIT_INTERNAL
     written = False
     if code == EXIT_OK and text is not None:
@@ -204,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
                 _write_stdout(text)
             written = True
         except OSError as e:
-            print(f"zet: 出力を書き出せません（{e}）", file=sys.stderr)
+            _err(f"zet: 出力を書き出せません（{e}）")
             if not out:
                 _discard_stdout()
             code = EXIT_USAGE
@@ -224,12 +230,12 @@ def main(argv: list[str] | None = None) -> int:
                 os.unlink(out)  # 記録の無い出力を残さない
             except OSError:
                 pass
-            print(f"zet: 監査ログに記録できません（{e}）。出力を削除しました", file=sys.stderr)
+            _err(f"zet: 監査ログに記録できません（{e}）。出力を削除しました")
         elif written:
-            print(f"zet: 監査ログに記録できません（{e}）。標準出力の内容は使わないでください", file=sys.stderr)
+            _err(f"zet: 監査ログに記録できません（{e}）。標準出力の内容は使わないでください")
         else:
-            print(f"zet: 監査ログに記録できません（{e}）", file=sys.stderr)
+            _err(f"zet: 監査ログに記録できません（{e}）")
         return EXIT_USAGE
     if code == EXIT_OK:
-        print(f"zet {args.command}: OK", file=sys.stderr)
+        _err(f"zet {args.command}: OK")
     return code
