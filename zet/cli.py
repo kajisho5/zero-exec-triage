@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import re
 import sys
@@ -55,15 +56,16 @@ def _report(violations) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if not _PERSON.match(args.operator):
+    if not _PERSON.fullmatch(args.operator):
         print("zet: --operator の形式が不正です", file=sys.stderr)
         return EXIT_USAGE
-    if getattr(args, "plan_id", None) and not _UUID.match(args.plan_id):
+    if getattr(args, "plan_id", None) and not _UUID.fullmatch(args.plan_id):
         print("zet: --plan-id は UUID（小文字）で指定してください", file=sys.stderr)
         return EXIT_USAGE
     try:
         now = now_utc(args.now)
-    except ValueError:
+        now + dt.timedelta(days=triage.MAX_DAYS)  # 期限の計算が範囲外になる時刻は受け付けない
+    except (ValueError, OverflowError):
         print("zet: --now は YYYY-MM-DDTHH:MM:SSZ 形式で指定してください", file=sys.stderr)
         return EXIT_USAGE
     try:
@@ -88,16 +90,17 @@ def main(argv: list[str] | None = None) -> int:
             plan = load_json(args.plan)
             record["plan_input_hash"] = sha256(canonical(plan))
             if args.command == "check":
-                violations = triage.check(inp, plan)
+                violations = triage.check(inp, plan, now=now)
             else:
-                output_obj = triage.finalize(inp, plan)
+                output_obj = triage.finalize(inp, plan, now=now)
     except ContractError as e:
         violations = e.violations
     except OSError as e:
         print(f"zet: {e}", file=sys.stderr)
         code = EXIT_USAGE
     except Exception as e:  # 想定外は fail-closed（出力しない）
-        print(f"zet: 内部エラー: {e!r}", file=sys.stderr)
+        # 例外の repr は入力文書全体を含みうるため、型名と短いメッセージだけを出す
+        print(f"zet: 内部エラー: {type(e).__name__}: {str(e)[:200]}", file=sys.stderr)
         code = EXIT_INTERNAL
 
     if code == EXIT_OK and violations:
@@ -123,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         if out:
             write_atomic(out, output_obj)
         else:
-            json.dump(output_obj, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
+            json.dump(output_obj, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False)
             sys.stdout.write("\n")
     if code == EXIT_OK:
         print(f"zet {args.command}: OK", file=sys.stderr)

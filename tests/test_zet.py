@@ -12,7 +12,16 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from zet import audit, cli, triage
-from zet.core import ROOT, ContractError, parse_ts, plan_hash, validator
+from zet.core import (
+    ROOT,
+    ContractError,
+    canonical,
+    load_json,
+    parse_ts,
+    plan_hash,
+    validator,
+    write_atomic,
+)
 
 FIX = ROOT / "tests" / "fixtures"
 NOW = parse_ts("2026-10-22T10:00:00Z")
@@ -329,6 +338,180 @@ class TestCliAndAudit(unittest.TestCase):
 
     def test_unwritable_log_refuses(self):
         os.environ["ZET_LOG_DIR"] = "/proc/zet-cannot-write"
+        self.assertEqual(self.run_cli("validate", str(self.d / "in.json"), "--operator", "alice")[0], 64)
+
+
+class TestRegressions(unittest.TestCase):
+    """bughunt-r1 で見つかった不具合の回帰テスト。"""
+
+    def setUp(self):
+        self.inp = make_input()
+        self.plan = fill(self.inp, triage.draft(self.inp, NOW, "alice"))
+        self.tmp = tempfile.TemporaryDirectory()
+        self.d = Path(self.tmp.name)
+        os.environ["ZET_LOG_DIR"] = str(self.d / "log")
+        (self.d / "in.json").write_text(json.dumps(self.inp), encoding="utf-8")
+
+    def tearDown(self):
+        os.environ.pop("ZET_LOG_DIR", None)
+        self.tmp.cleanup()
+
+    run_cli = TestCliAndAudit.run_cli
+
+    # 1. pattern の $ は末尾改行の直前に一致してはならない（ECMA の意味）
+    def test_pattern_dollar_does_not_match_before_newline(self):
+        it = self.plan["items"][0]
+        it.update(decided_by="alice\n", approved_by=["alice"])
+        self.assertIn("I-11", codes(triage.check(self.inp, self.plan)))
+        from zet.jsonschema_lite import Validator
+        self.assertFalse(Validator({"pattern": "^a$"}).is_valid("a\n"))
+        self.assertTrue(Validator({"pattern": "^a\\$$"}).is_valid("a$"))  # エスケープした $ はリテラル
+        self.assertTrue(Validator({"pattern": "^[$]$"}).is_valid("$"))  # 文字クラス内の $ はリテラル
+
+    def test_newline_in_module_and_id_rejected(self):
+        inp = make_input("findings-partial.json")
+        inp["findings"]["findings"][0]["module"] = "§6\n"
+        self.assertIn("I-11", codes(triage.validate_input(inp)))
+        inp = make_input()
+        inp["findings"]["findings"][1]["id"] = inp["findings"]["findings"][0]["id"] + "\n"
+        self.assertIn("I-11", codes(triage.validate_input(inp)))
+
+    def test_cli_operator_and_plan_id_newline_rejected(self):
+        self.assertEqual(self.run_cli("validate", str(self.d / "in.json"), "--operator", "ci\n")[0], 64)
+        self.assertEqual(self.run_cli("draft", str(self.d / "in.json"), "--operator", "ci",
+                                      "--plan-id", "00000000-0000-0000-0000-000000000000\n")[0], 64)
+
+    # 2. 確定 plan（plan_hash 付き）は check / finalize でも plan_hash を検証する
+    def test_check_and_finalize_verify_plan_hash_of_final_plan(self):
+        final = triage.finalize(self.inp, self.plan)
+        self.assertEqual(triage.check(self.inp, final), [])
+        self.assertEqual(triage.finalize(self.inp, final), final)  # 改ざんが無ければ冪等
+        final["items"][0]["action"]["target"] = "/etc/shadow"
+        self.assertIn("I-11", codes(triage.check(self.inp, final)))
+        with self.assertRaises(ContractError) as cm:
+            triage.finalize(self.inp, final)
+        self.assertIn("I-11", codes(cm.exception.violations))
+        (self.d / "final.json").write_text(json.dumps(final), encoding="utf-8")
+        self.assertEqual(self.run_cli("check", str(self.d / "in.json"), str(self.d / "final.json"), "--operator", "alice")[0], 3)
+        self.assertEqual(self.run_cli("finalize", str(self.d / "in.json"), str(self.d / "final.json"),
+                                      "--operator", "alice", "-o", str(self.d / "out.json"))[0], 3)
+        self.assertFalse((self.d / "out.json").exists())
+
+    # 3. 有限でない数値（1e400 → inf）は読み込みで拒否し、Infinity を書き出さない
+    def test_non_finite_number_rejected(self):
+        self.plan["items"][0]["action"]["params"]["n"] = 1
+        raw = json.dumps(self.plan).replace('"n": 1', '"n": 1e400')
+        (self.d / "plan.json").write_text(raw, encoding="utf-8")
+        with self.assertRaises(ContractError) as cm:
+            load_json(str(self.d / "plan.json"))
+        self.assertEqual(codes(cm.exception.violations), {"I-11"})
+        code, _, _ = self.run_cli("finalize", str(self.d / "in.json"), str(self.d / "plan.json"),
+                                  "--operator", "alice", "-o", str(self.d / "out.json"))
+        self.assertEqual(code, 3)
+        self.assertFalse((self.d / "out.json").exists())
+        with self.assertRaises(ValueError):
+            canonical({"x": float("inf")})
+        with self.assertRaises(ValueError):
+            write_atomic(str(self.d / "nan.json"), {"x": float("nan")})
+        self.assertFalse((self.d / "nan.json").exists())
+
+    # 4. 不正なサロゲートは I-11（終了コード 3）。内部エラーでも文書全体を stderr に出さない
+    def test_lone_surrogate_rejected_without_echo(self):
+        self.plan["items"][0]["reason"] = "SECRET-" + "x" * 5000 + "\ud800"
+        (self.d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")  # ensure_ascii で \ud800 のまま書かれる
+        code, _, err = self.run_cli("check", str(self.d / "in.json"), str(self.d / "plan.json"), "--operator", "alice")
+        self.assertEqual(code, 3)
+        self.assertIn("I-11", err)
+        self.assertNotIn("SECRET", err)
+
+    def test_internal_error_message_is_truncated(self):
+        orig = triage.validate_input
+        triage.validate_input = lambda inp: (_ for _ in ()).throw(RuntimeError({"doc": "y" * 10000}))
+        try:
+            code, _, err = self.run_cli("validate", str(self.d / "in.json"), "--operator", "alice")
+        finally:
+            triage.validate_input = orig
+        self.assertEqual(code, 70)
+        self.assertIn("RuntimeError", err)
+        self.assertLess(len(err), 400)
+
+    # 5. decided_at は created_at 以上・現在時刻以下（未来の判断日で I-9 の期限を延ばせない）
+    def test_decided_at_bounded(self):
+        it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
+        it.update(decided_at="2030-01-01T00:00:00Z", due_at="2030-01-05T00:00:00Z")
+        self.assertIn("I-9", codes(triage.check(self.inp, self.plan, now=NOW)))
+        it.update(decided_at="2026-10-21T00:00:00Z", due_at="2026-10-22T00:00:00Z")  # created_at より前
+        self.assertIn("I-9", codes(triage.check(self.inp, self.plan, now=NOW)))
+        it.update(decided_at="2026-10-22T10:00:00Z", due_at="2026-10-23T00:00:00Z")
+        self.assertEqual(triage.check(self.inp, self.plan, now=NOW), [])
+        it.update(decided_at="2026-10-22T11:00:00Z")
+        with self.assertRaises(ContractError):
+            triage.finalize(self.inp, self.plan, now=NOW)
+        (self.d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
+        self.assertEqual(self.run_cli("check", str(self.d / "in.json"), str(self.d / "plan.json"),
+                                      "--operator", "alice", "--now", "2026-10-22T10:30:00Z")[0], 3)
+        self.assertEqual(self.run_cli("check", str(self.d / "in.json"), str(self.d / "plan.json"),
+                                      "--operator", "alice", "--now", "2026-10-22T11:00:00Z")[0], 0)
+
+    # 6. held は errors[] のモジュール専用（CRITICAL を held に移して判断を逃れられない）
+    def test_held_only_for_errored_modules(self):
+        inp = make_input("findings-partial.json")
+        plan = fill(inp, triage.draft(inp, NOW, "alice"))
+        self.assertEqual(triage.check(inp, plan), [])
+        by_id = {x["id"]: x for x in inp["findings"]["findings"]}
+        crit = next(i for i in plan["items"] if by_id[i["finding_id"]]["level"] == "CRITICAL")
+        p = copy.deepcopy(plan)
+        p["items"].remove(crit)
+        p["held"].append({"finding_id": crit["finding_id"], "module": by_id[crit["finding_id"]]["module"], "reason": "later"})
+        self.assertIn("I-1", codes(triage.check(inp, p)))
+        p = copy.deepcopy(plan)
+        p["held"].append({"finding_id": None, "module": "§2", "reason": "later"})
+        self.assertIn("I-10", codes(triage.check(inp, p)))
+        inp["findings"]["errors"].append({"module": "§15", "reason": "module_failed"})
+        p = triage.draft(inp, NOW, "alice")
+        self.assertEqual(triage.check(inp, fill(inp, p)), [])
+        h = next(h for h in p["held"] if h["finding_id"] is not None)
+        h["module"] = "§6"  # errors[] にあるが finding の実モジュールではない
+        self.assertIn("I-10", codes(triage.check(inp, fill(inp, p))))
+
+    # 7. 存在しない日時・範囲外の日時は I-11（--now は 64）で、内部エラーにしない
+    def test_invalid_and_out_of_range_timestamps(self):
+        for k, ts in (("decided_at", "2026-13-01T00:00:00Z"), ("due_at", "2026-10-22T10:00:60Z")):
+            p = copy.deepcopy(self.plan)
+            p["items"][0][k] = ts
+            self.assertIn("I-11", codes(triage.check(self.inp, p)))
+            (self.d / "plan.json").write_text(json.dumps(p), encoding="utf-8")
+            self.assertEqual(self.run_cli("check", str(self.d / "in.json"), str(self.d / "plan.json"), "--operator", "alice")[0], 3)
+        p = copy.deepcopy(self.plan)
+        p["created_at"] = "2026-02-30T00:00:00Z"
+        self.assertIn("I-11", codes(triage.check(self.inp, p)))
+        p = copy.deepcopy(self.plan)
+        it = next(i for i in p["items"] if i["decision"] == "remediate")
+        it.update(decided_at="9999-12-31T00:00:00Z", due_at="9999-12-31T00:00:00Z")
+        self.assertIn("I-11", codes(triage.check(self.inp, p, now=parse_ts("9999-12-31T23:59:59Z"))))
+        with self.assertRaises(ContractError):
+            triage.draft(self.inp, parse_ts("9999-12-30T00:00:00Z"), "alice")
+        self.assertEqual(self.run_cli("draft", str(self.d / "in.json"), "--operator", "alice", "--now", "9999-12-30T00:00:00Z")[0], 64)
+        self.assertEqual(self.run_cli("draft", str(self.d / "in.json"), "--operator", "alice", "--now", "2026-13-01T00:00:00Z")[0], 64)
+
+    # 8. 監査ログ: 途中で切れた最終行に連結しない / シンボリックリンクのログは拒否
+    def test_audit_torn_line_and_symlink(self):
+        audit.append({"command": "validate"})
+        with open(audit.log_path(), "ab") as f:
+            f.write(b'{"command":"torn')
+        rec = audit.append({"command": "check"})
+        lines = audit.log_path().read_bytes().split(b"\n")
+        self.assertEqual(lines[-1], b"")
+        self.assertEqual(json.loads(lines[-2])["command"], "check")
+        self.assertEqual(rec["prev_hash"], "sha256:" + hashlib.sha256(b'{"command":"torn').hexdigest())
+        self.assertEqual(audit.verify_chain(), ["line 2: JSON ではありません"])
+        target = self.d / "elsewhere.jsonl"
+        target.write_bytes(b"")
+        audit.log_path().unlink()
+        audit.log_path().symlink_to(target)
+        with self.assertRaises(OSError):
+            audit.append({"command": "validate"})
+        self.assertEqual(target.read_bytes(), b"")
         self.assertEqual(self.run_cli("validate", str(self.d / "in.json"), "--operator", "alice")[0], 64)
 
 

@@ -8,6 +8,8 @@ from typing import Any
 from .core import (DECISIONS, REVERSIBLE_BY_TYPE, ContractError, Violation,
                    fmt_ts, parse_ts, plan_hash, schema_violations)
 
+MAX_DAYS = 3650  # triage-input.schema.json の deadlines / decision_window_days の最大値
+
 
 # --- 入力検証（zet validate） ----------------------------------------------
 def validate_input(inp: Any) -> list[Violation]:
@@ -75,9 +77,27 @@ def skillpact_effects(finding: dict) -> list[str]:
     return list(sp["declared_effects"]) if sp else []
 
 
+def _timestamp_violations(plan: dict) -> list[Violation]:
+    """形式は正しくても存在しない日時（13 月、60 秒など）を I-11 として返す。"""
+    v: list[Violation] = []
+    pairs = [(None, plan["created_at"])]
+    pairs += [(it["finding_id"], it[k]) for it in plan["items"] for k in ("decided_at", "due_at", "recheck_at")]
+    for fid, ts in pairs:
+        try:
+            if ts is not None:
+                parse_ts(ts)
+        except ValueError:
+            v.append(Violation("I-11", f"存在しない日時です: {ts}", fid))
+    return v
+
+
 # --- 下書き（zet draft） ---------------------------------------------------
 def draft(inp: dict, now: dt.datetime, operator: str, plan_id: str | None = None) -> dict:
     require_valid_input(inp)
+    try:  # 期限の日数はスキーマ上 3650 日まで。加算できない現在時刻では下書きを作らない
+        now + dt.timedelta(days=MAX_DAYS)
+    except OverflowError:
+        raise ContractError([Violation("I-11", "現在時刻が日時の範囲を超えています")]) from None
     f = inp["findings"]
     pol = inp["policy"]
     errmods = errored_modules(f)
@@ -122,9 +142,14 @@ def draft(inp: dict, now: dt.datetime, operator: str, plan_id: str | None = None
 
 
 # --- 不変条件チェック（zet check） -----------------------------------------
-def check(inp: dict, plan: Any, final: bool = False) -> list[Violation]:
-    """I-1〜I-12。未記入の decision も違反として返す。final=True は確定 plan（finalize の出力 / GER 入力）として検査する。"""
+def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = None) -> list[Violation]:
+    """I-1〜I-12。未記入の decision も違反として返す。final=True は確定 plan（finalize の出力 / GER 入力）として検査する。
+
+    plan_hash を持つ plan は確定 plan なので、final の指定にかかわらず確定 plan として検査する
+    （改ざんされた確定 plan が check を通り、finalize で黙って再ハッシュされるのを防ぐ）。
+    """
     require_valid_input(inp)
+    final = final or (isinstance(plan, dict) and "plan_hash" in plan)
     v = schema_violations("remediation-plan.schema.json", plan, "plan")
     if v:
         return v
@@ -133,6 +158,11 @@ def check(inp: dict, plan: Any, final: bool = False) -> list[Violation]:
     by_id = {x["id"]: x for x in f["findings"]}
     errmods = errored_modules(f)
     approvers = set(pol["approvers"])
+    now = now or dt.datetime.now(dt.timezone.utc)
+    v = _timestamp_violations(plan)
+    if v:
+        return v
+    created = parse_ts(plan["created_at"])
 
     # I-1 / I-2 / I-10: 全 finding がちょうど 1 回、items か held に現れる
     seen: dict[str, str] = {}
@@ -153,6 +183,20 @@ def check(inp: dict, plan: Any, final: bool = False) -> list[Violation]:
     for fid, where in seen.items():
         if by_id[fid]["module"] in errmods and where != "held":
             v.append(Violation("I-10", f"未確定モジュール {by_id[fid]['module']} の finding は held にすること", fid))
+    # held は errors[] のモジュール（未確定）専用。確定したモジュールの finding を held で判断から外せない
+    for h in plan["held"]:
+        fid, mod = h["finding_id"], h.get("module")
+        if fid is None:
+            if mod not in errmods:
+                v.append(Violation("I-10", f"モジュール {mod} は errors[] に無いためモジュール単位で held にできません"))
+            continue
+        x = by_id.get(fid)
+        if x is None:
+            continue
+        if mod is not None and mod != x["module"]:
+            v.append(Violation("I-10", f"held の module {mod} が finding のモジュール {x['module']} と一致しません", fid))
+        if x["module"] not in errmods:
+            v.append(Violation("I-1", f"モジュール {x['module']} は確定しているため held にできません（items で判断すること）", fid))
     held_mods = {h.get("module") for h in plan["held"] if h["finding_id"] is None}
     for mod in errmods:
         if mod not in held_mods:
@@ -227,20 +271,10 @@ def check(inp: dict, plan: Any, final: bool = False) -> list[Violation]:
                 v.append(Violation("I-4", "確定 plan の action には reversible と skillpact_effects が必要です", fid))
         # I-9: 期限
         if it["decided_at"]:
-            dec = parse_ts(it["decided_at"])
-            days = pol["deadlines"].get(lv)
-            if it["due_at"]:
-                due = parse_ts(it["due_at"])
-                if days is None:
-                    v.append(Violation("I-9", f"policy.deadlines に {lv} が無いため due_at を検証できません", fid))
-                elif due > dec + dt.timedelta(days=days):
-                    v.append(Violation("I-9", f"due_at が期限（判断日 + {days} 日）を超えています", fid))
-                if due < dec:
-                    v.append(Violation("I-9", "due_at が判断日より前です", fid))
-            if it["recheck_at"] and d in ("exception", "defer"):
-                rc = parse_ts(it["recheck_at"])
-                if rc > dec + dt.timedelta(days=pol["decision_window_days"]):
-                    v.append(Violation("I-9", f"recheck_at が判断ウィンドウ（{pol['decision_window_days']} 日）を超えています", fid))
+            try:
+                v += _deadline_violations(it, d, lv, pol, created, now)
+            except OverflowError:
+                v.append(Violation("I-11", "期限の計算が日時の範囲を超えています", fid))
     if final:
         if plan["status"] == "draft":
             v.append(Violation("I-12", "確定 plan の status が draft です"))
@@ -249,9 +283,35 @@ def check(inp: dict, plan: Any, final: bool = False) -> list[Violation]:
     return v
 
 
+def _deadline_violations(it: dict, d: str, lv: str, pol: dict, created: dt.datetime, now: dt.datetime) -> list[Violation]:
+    """I-9。日時の加算が範囲外なら OverflowError（呼び出し側で I-11 にする）。"""
+    v: list[Violation] = []
+    fid = it["finding_id"]
+    dec = parse_ts(it["decided_at"])
+    # 判断日は期限の起点。未来や plan 作成前の日付で期限を引き延ばせないようにする
+    if dec < created:
+        v.append(Violation("I-9", "decided_at が plan の created_at より前です", fid))
+    if dec > now:
+        v.append(Violation("I-9", "decided_at が現在時刻より後です", fid))
+    days = pol["deadlines"].get(lv)
+    if it["due_at"]:
+        due = parse_ts(it["due_at"])
+        if days is None:
+            v.append(Violation("I-9", f"policy.deadlines に {lv} が無いため due_at を検証できません", fid))
+        elif due > dec + dt.timedelta(days=days):
+            v.append(Violation("I-9", f"due_at が期限（判断日 + {days} 日）を超えています", fid))
+        if due < dec:
+            v.append(Violation("I-9", "due_at が判断日より前です", fid))
+    if it["recheck_at"] and d in ("exception", "defer"):
+        rc = parse_ts(it["recheck_at"])
+        if rc > dec + dt.timedelta(days=pol["decision_window_days"]):
+            v.append(Violation("I-9", f"recheck_at が判断ウィンドウ（{pol['decision_window_days']} 日）を超えています", fid))
+    return v
+
+
 # --- 確定（zet finalize） --------------------------------------------------
-def finalize(inp: dict, plan: dict) -> dict:
-    v = check(inp, plan)
+def finalize(inp: dict, plan: dict, now: dt.datetime | None = None) -> dict:
+    v = check(inp, plan, now=now)
     if v:
         raise ContractError(v)
     by_id = {x["id"]: x for x in inp["findings"]["findings"]}
@@ -273,7 +333,7 @@ def finalize(inp: dict, plan: dict) -> dict:
         "held": plan["held"],
     }
     final["plan_hash"] = plan_hash(final)
-    v = check(inp, final, final=True)
+    v = check(inp, final, final=True, now=now)
     if v:
         raise ContractError(v)
     return final
