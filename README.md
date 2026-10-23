@@ -28,7 +28,8 @@ ZET does not look at the file system. With ZES findings 1.0 it works from `modul
 | Malicious files, payloads, `.pth` hooks, IoC files (§2 §15 §18 §20 §30 §40), SymJack links (§17) | `quarantine` self | CL-IR (and CL-SECRET) | CL-IR |
 | `node_modules/<name>/package.json` of a compromised package (§15) | `quarantine` `npm_pkg_dir` | CL-PKG, CL-IR, CL-SECRET | CL-PKG |
 | Compromised `*.dist-info` (§15 CRITICAL) | `quarantine` `pypi_record` (GER refuses it when there is no RECORD) | CL-PKG, CL-SECRET | CL-VENV |
-| Lock files and requirements (§15), `*.egg-info`, vulnerable versions | — | — | CL-PKG / CL-VENV |
+| npm lock files (§15, `pkg.lockfile_compromised`), even with `related: npm_installed`: the installed copy is quarantined through its own `node_modules/<name>/package.json` finding, and the lock file finding stays open until an operator regenerates the lock file | — | — | CL-LOCKFILE |
+| Other lock files and requirements (§15), `*.egg-info`, vulnerable versions | — | — | CL-PKG / CL-VENV |
 | Dangerous MCP server in `.mcp.json`, `mcp.json`, `.codex/config.toml` (§17 HIGH) | `disable_mcp_server` | CL-MCP (+ CL-IR) | CL-MCP |
 | `npx` / `uvx` MCP server (§17 MEDIUM) | — | — | CL-MCP-PIN |
 | `package.json` lifecycle script (§2 / §15), `.claude/settings.json` hooks (§7), `.vscode/tasks.json` `runOn` (§7) | `edit_json` | CL-IR when it is a campaign | CL-IR / CL-REVIEW |
@@ -85,7 +86,7 @@ See [SKILL.md](SKILL.md) for the detailed procedure and how to write decisions, 
 | I-10 | Findings from modules listed in errors[] go to held (they are not passed to GER). held may be used only for modules in errors[] |
 | I-11 | Strict schema (rejects unknown fields, duplicate keys, nesting deeper than GER's 64-level limit, invalid timestamps, non-finite numbers and invalid surrogates). For a plan that carries plan_hash, check / finalize also verify plan_hash |
 | I-12 | If the input is partial, the plan is partial too, and modules in errors[] are held module by module |
-| I-13 | Every automatic fix carries the mandatory follow-up checklists for its finding (`action.followup`, for example CL-IR and CL-SECRET for a malware indicator, CL-LAUNCHD for a LaunchAgent, CL-EXT for a browser extension); every checklist (and follow-up) contains all steps of its ZET template unchanged (steps may be added); with findings 1.1, the action type must be allowed for the finding's `kind` |
+| I-13 | Every automatic fix carries the mandatory follow-up checklists for its finding (`action.followup`, for example CL-IR and CL-SECRET for a malware indicator, CL-LAUNCHD for a LaunchAgent, CL-EXT for a browser extension); every checklist (and follow-up) contains all steps of its ZET template unchanged (steps may be added); with findings 1.1, the action type must be allowed for the finding's `kind`; a lock file finding (`pkg.lockfile_compromised`, or §15 on a lock file) is remediated only by a checklist (CL-LOCKFILE for npm, CL-PKG otherwise), because quarantining the installed package does not make the lock file finding go away |
 
 ## Schemas
 
@@ -94,7 +95,7 @@ See [SKILL.md](SKILL.md) for the detailed procedure and how to write decisions, 
 | [schemas/remediation-plan.schema.json](schemas/remediation-plan.schema.json) | **ZET** | Output contract (1.1 adds `scope`, and `relation` / `finding_path` / `group` / `evidence` / `followup` on actions; a 1.0 plan with chmod only is still valid). GER references it pinned to a version |
 | [schemas/triage-input.schema.json](schemas/triage-input.schema.json) | ZET | Input |
 | [schemas/vendor/findings.schema.json](schemas/vendor/findings.schema.json) | ZES | Version-pinned copy (source commit and SHA-256 in `schemas/vendor/VENDOR.json`) |
-| [schemas/vendor/findings-1.1-draft.schema.json](schemas/vendor/findings-1.1-draft.schema.json) | ZES (**draft**) | ZET's draft of ZES findings 1.1 (optional `kind` / `subject` / `locators` / `related` / `evidence`, top-level `scan_roots`). ZES does not emit 1.1 yet; replace this with ZES's own schema when it does |
+| [schemas/vendor/findings-1.1.schema.json](schemas/vendor/findings-1.1.schema.json) | ZES | ZES findings 1.1 (ZES 0.4.0+): 1.0 plus optional `kind` / `subject` / `locators` / `related` / `evidence` and top-level `scan_roots`. Pinned copy of ZES's `schemas/findings.schema.json` |
 | [schemas/vendor/actions.schema.json](schemas/vendor/actions.schema.json) | GER | Version-pinned copy of the params of each GER action |
 
 At runtime, the schema files themselves are validated with a subset validator written in the standard library (`zet/jsonschema_lite.py`). The tests confirm that its verdicts match the official `jsonschema`.

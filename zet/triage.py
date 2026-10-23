@@ -26,8 +26,8 @@ def validate_input(inp: Any) -> list[Violation]:
     if v:
         return v
     f = inp["findings"]
-    # findings 1.0（ZES の現行）と 1.1（kind / subject / locators / related / evidence / scan_roots。ZES 側は未実装の草案）
-    name = "vendor/findings-1.1-draft.schema.json" if isinstance(f, dict) and f.get("schema_version") == "1.1" \
+    # findings 1.0（ZES 0.3.x）と 1.1（ZES 0.4.0 以降。kind / subject / locators / related / evidence / scan_roots）
+    name = "vendor/findings-1.1.schema.json" if isinstance(f, dict) and f.get("schema_version") == "1.1" \
         else "vendor/findings.schema.json"
     v = schema_violations(name, f, "findings")
     if v:
@@ -185,18 +185,28 @@ def _action_shape_violations(a: dict, fid: str, finding: dict, sug: list | None 
         elif int(p["mode"], 8) & 0o002:
             # 現在の mode は ZET からは見えない（GER が G-7 で「権限を足さない」ことを確かめる）。静的に分かる緩和は拒否する
             v.append(Violation("I-4", "chmod で他者の書き込み権限（world-writable）は付けられません（修復は権限を絞る操作に限る）", fid))
-    if a["type"] == "checklist" and isinstance(a["params"], dict) and not remedy.template_ok(a["params"], path):
+    pkg = remedy.pkg_of(finding)
+    if a["type"] == "checklist" and isinstance(a["params"], dict) and not remedy.template_ok(a["params"], path, pkg):
         v.append(Violation("I-13", "checklist の手順は ZET の雛形（template）の手順をすべて含むこと", fid))
     fus = a.get("followup", [])
     if a["type"] == "checklist" and fus:
         v.append(Violation("I-4", "checklist の action に followup は付けられません（手順は params.steps に書く）", fid))
     for fu in fus:
-        if not remedy.template_ok(fu, path):
+        if not remedy.template_ok(fu, path, pkg):
             v.append(Violation("I-13", f"action.followup の {fu.get('template')} は ZET の雛形の手順をすべて含むこと", fid))
     need = remedy.required_followups(finding, a, sug or [])
     missing = sorted(need - {fu.get("template") for fu in fus})
     if missing:
         v.append(Violation("I-13", f"自動修復には後続作業 {', '.join(missing)} が必須です（action.followup）", fid))
+    if remedy.is_lockfile_finding(finding):
+        # §9.6: ロックファイルの finding は自動修復で消えない（実体を隔離しても ZES は再び報告する）。checklist だけで、
+        # 再生成の手順を含む雛形にすること。完了にするのは作業者（ger confirm）
+        want = remedy.lockfile_template(finding)
+        if a["type"] != "checklist":
+            v.append(Violation("I-13", f"ロックファイルの finding は自動修復で消えないため checklist（{want}）だけです。"
+                                       "インストール済みの実体の隔離は node_modules/<name>/package.json の finding で行うこと", fid))
+        elif isinstance(a["params"], dict) and a["params"].get("template") != want:
+            v.append(Violation("I-13", f"ロックファイルの finding の checklist は再生成の手順を含む {want} にすること", fid))
     kind = finding.get("kind")
     if kind in remedy.KIND_ACTIONS and a["type"] not in remedy.KIND_ACTIONS[kind]:
         v.append(Violation("I-13", f"kind {kind} の finding に操作 {a['type']} は使えません（{', '.join(sorted(remedy.KIND_ACTIONS[kind]))}）", fid))

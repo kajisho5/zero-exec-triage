@@ -16,14 +16,12 @@
       "sha256": "d37298ae6a36d1faa61717daac818b4376c457f6f36a2f96736d52c4c20248f1"
     },
     {
-      "path": "schemas/vendor/findings-1.1-draft.schema.json",
-      "source_repo": "kajisho5/zero-exec-triage",
-      "source_path": "schemas/vendor/findings-1.1-draft.schema.json",
-      "source_commit": null,
-      "status": "draft",
+      "path": "schemas/vendor/findings-1.1.schema.json",
+      "source_repo": "kajisho5/zero-exec-shield",
+      "source_path": "schemas/findings.schema.json",
+      "source_commit": "0ee9ce683ce28fa490d0018fb7533c2724e4beac",
       "schema_version": "1.1",
-      "note": "ZES findings 1.1 の草案（GER 修復能力拡張 設計 0.2 §5.2）。ZES は未実装。ZES が 1.1 を出したら ZES の schemas/findings.schema.json で置き換える",
-      "sha256": "c028b0a62ca9bbed346905aef2d813b852f79d5fda6efdd94f95a72ad8766085"
+      "sha256": "a6f4f7f36aff2352c827d3d63b0211a29092234f5eceda02617a46ccc4dcc157"
     }
   ]
 }

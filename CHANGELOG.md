@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### ロックファイルの finding を自動修復と数えない（I-13）
+
+- **原因**: ロックファイルの finding（`pkg.lockfile_compromised`）に `related: npm_installed` があると、draft が隣の `node_modules/<name>` の quarantine を auto として提案し、同じ対象の `node_modules/<name>/package.json` の finding と同じ group にまとめていた。隔離しても ZES はロックファイルの中身を見て同じ finding を報告するため、E2E（lockfile-installed）で「自動で消えるはずの finding が残る」になっていた
+- **draft**: ロックファイルの finding には auto を提案しない。checklist だけで、npm のロックファイルは新しい雛形 CL-LOCKFILE（「依存を取り除いてから〔`npm uninstall <pkg>`〕、または安全版に固定してからロックファイルを再生成する」を必須の手順に含む。`{pkg}` は findings 1.1 の `subject.package`）。他の finding の隔離の group にも入れない。インストール済みの実体の隔離は `node_modules/<name>/package.json` の finding の `quarantine npm_pkg_dir` が行う
+- **I-13**: ロックファイルの finding（`kind: pkg.lockfile_compromised`、または §15 のロックファイル）の remediate は checklist（CL-LOCKFILE / CL-PKG）だけ。quarantine `npm_installed` などは確定させない。`KIND_ACTIONS["pkg.lockfile_compromised"]` を checklist だけにした（**判断の互換性に影響**: ロックファイルの finding に quarantine を採用した計画は確定できなくなる）
+- 設計 §9.6、README の対応表と I-13 を更新
+
+
+### ZES findings 1.1 の正式版を写す
+
+- `schemas/vendor/findings-1.1-draft.schema.json`（ZET が書いた草案）を、ZES 0.4.0 の `schemas/findings.schema.json` の写し `schemas/vendor/findings-1.1.schema.json` に置き換えた（内容は草案と同じで、`$id`・title・description が ZES のもの）。VENDOR.json の `status: draft` を外し、`source_repo` / `source_path` / `source_commit` を ZES に向けた
+
 ### GER 修復能力拡張 Phase 1 への対応（plan 1.1。設計 0.2、Q-1〜Q-6 を推奨どおり採用）
 
 - **plan スキーマ 1.1**: plan に `scope`（承認する検査範囲）、action に `relation`・`finding_path`・`group`・`evidence {kind, hash}`・`followup`、`constraints.suggested_actions` を追加。`action.target` は checklist だけ null にできる。1.0 の計画（chmod のみ）も有効。GER に写す

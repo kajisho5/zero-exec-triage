@@ -28,7 +28,8 @@ ZET はファイルシステムを見ません。ZES の findings 1.0 では `mo
 | 悪性のファイル・ペイロード・`.pth` のフック・IoC のファイル（§2 §15 §18 §20 §30 §40）、SymJack のリンク（§17） | `quarantine` self | CL-IR（と CL-SECRET） | CL-IR |
 | 侵害パッケージの `node_modules/<name>/package.json`（§15） | `quarantine` `npm_pkg_dir` | CL-PKG・CL-IR・CL-SECRET | CL-PKG |
 | 侵害された `*.dist-info`（§15 CRITICAL） | `quarantine` `pypi_record`（RECORD が無ければ GER が拒否） | CL-PKG・CL-SECRET | CL-VENV |
-| ロックファイル・requirements（§15）、`*.egg-info`、脆弱な版 | — | — | CL-PKG / CL-VENV |
+| npm のロックファイル（§15、`pkg.lockfile_compromised`。`related: npm_installed` があっても同じ。インストール済みの実体は `node_modules/<name>/package.json` の finding で隔離し、ロックファイルの finding は作業者が再生成するまで残る） | — | — | CL-LOCKFILE |
+| その他のロックファイル・requirements（§15）、`*.egg-info`、脆弱な版 | — | — | CL-PKG / CL-VENV |
 | `.mcp.json`・`mcp.json`・`.codex/config.toml` の危険な MCP サーバー（§17 HIGH） | `disable_mcp_server` | CL-MCP（と CL-IR） | CL-MCP |
 | `npx` / `uvx` の MCP サーバー（§17 MEDIUM） | — | — | CL-MCP-PIN |
 | `package.json` のライフサイクルスクリプト（§2 / §15）、`.claude/settings.json` の hooks（§7）、`.vscode/tasks.json` の `runOn`（§7） | `edit_json` | campaign があれば CL-IR | CL-IR / CL-REVIEW |
@@ -83,7 +84,7 @@ bin/zet verify-log
 | I-10 | errors[] のモジュールの finding は held にする（GER に渡さない）。held は errors[] のモジュールにだけ使える |
 | I-11 | strict スキーマ（未知フィールド・重複キー・64 段を超える入れ子（GER と同じ上限）・不正な時刻・有限でない数値・不正なサロゲートを拒否）。plan_hash を持つ plan は check / finalize でも plan_hash を検証 |
 | I-12 | 入力が partial なら plan も partial で、errors[] のモジュールをモジュール単位で held にする |
-| I-13 | 自動修復には、その finding の必須の後続チェックリスト（`action.followup`。マルウェアの痕跡なら CL-IR と CL-SECRET、LaunchAgent なら CL-LAUNCHD、ブラウザ拡張なら CL-EXT など）が付いていること。チェックリスト（と後続作業）は ZET の雛形の手順を変えずにすべて含むこと（手順を足すのはよい）。findings 1.1 では、finding の `kind` に許された操作であること |
+| I-13 | 自動修復には、その finding の必須の後続チェックリスト（`action.followup`。マルウェアの痕跡なら CL-IR と CL-SECRET、LaunchAgent なら CL-LAUNCHD、ブラウザ拡張なら CL-EXT など）が付いていること。チェックリスト（と後続作業）は ZET の雛形の手順を変えずにすべて含むこと（手順を足すのはよい）。findings 1.1 では、finding の `kind` に許された操作であること。ロックファイルの finding（`pkg.lockfile_compromised`、または §15 のロックファイル）の remediate はチェックリスト（npm は CL-LOCKFILE、それ以外は CL-PKG）だけ（インストール済みの実体を隔離してもロックファイルの finding は消えないため） |
 
 ## スキーマ
 
@@ -92,7 +93,7 @@ bin/zet verify-log
 | [schemas/remediation-plan.schema.json](schemas/remediation-plan.schema.json) | **ZET** | 出力契約（1.1 で `scope` と、action の `relation` / `finding_path` / `group` / `evidence` / `followup` を追加。chmod だけの 1.0 の計画も有効）。GER は版固定で参照 |
 | [schemas/triage-input.schema.json](schemas/triage-input.schema.json) | ZET | 入力 |
 | [schemas/vendor/findings.schema.json](schemas/vendor/findings.schema.json) | ZES | 版固定の写し（`schemas/vendor/VENDOR.json` に取り込み元コミットと SHA-256） |
-| [schemas/vendor/findings-1.1-draft.schema.json](schemas/vendor/findings-1.1-draft.schema.json) | ZES（**草案**） | ZET が書いた ZES findings 1.1 の草案（任意の `kind` / `subject` / `locators` / `related` / `evidence`、トップレベルの `scan_roots`）。ZES はまだ 1.1 を出さない。ZES が出すようになったら ZES のスキーマで置き換える |
+| [schemas/vendor/findings-1.1.schema.json](schemas/vendor/findings-1.1.schema.json) | ZES | ZES findings 1.1（ZES 0.4.0 以降）。1.0 に任意の `kind` / `subject` / `locators` / `related` / `evidence` とトップレベルの `scan_roots` を足したもの。ZES の `schemas/findings.schema.json` の版固定の写し |
 | [schemas/vendor/actions.schema.json](schemas/vendor/actions.schema.json) | GER | GER の操作ごとの params の版固定の写し |
 
 実行時はスキーマファイルそのものを、標準ライブラリで書いたサブセット検証器（`zet/jsonschema_lite.py`）で検証します。テストでは公式の `jsonschema` と判定が一致することを確認しています。

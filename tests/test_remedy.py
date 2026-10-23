@@ -1,4 +1,4 @@
-"""ZET 0.2: finding → 修復の対応表（draft の提案）、group、必須の後続作業（I-13）、関係（I-4）、plan 1.1、findings 1.1（草案）。"""
+"""ZET 0.2: finding → 修復の対応表（draft の提案）、group、必須の後続作業（I-13）、関係（I-4）、plan 1.1、findings 1.1。"""
 from __future__ import annotations
 
 import copy
@@ -102,7 +102,7 @@ class TestSuggestions(unittest.TestCase):
             (F("§17", "HIGH", R + "/x/.codex/config.toml", "mcp-poisoning"), ("disable_mcp_server", "self", R + "/x/.codex/config.toml"), {"CL-MCP", "CL-IR"}, "CL-MCP"),  # noqa: E501
             (F("§17", "CRITICAL", R + "/docs/vid.mp4", "mcp-poisoning", content=False), ("quarantine", "self", R + "/docs/vid.mp4"), {"CL-IR"}, "CL-IR"),
             (F("§15", "CRITICAL", R + "/node_modules/keyv/package.json", "chaindrop-keyv"), ("quarantine", "npm_pkg_dir", R + "/node_modules/keyv"), {"CL-PKG", "CL-IR", "CL-SECRET"}, "CL-PKG"),  # noqa: E501
-            (F("§15", "CRITICAL", R + "/package-lock.json", "chaindrop-keyv"), None, set(), "CL-PKG"),
+            (F("§15", "CRITICAL", R + "/package-lock.json", "chaindrop-keyv"), None, set(), "CL-LOCKFILE"),
             (F("§15", "CRITICAL", R + "/sp/litellm-1.107.0.dist-info", "litellm-oct2026", content=False), ("quarantine", "pypi_record", R + "/sp/litellm-1.107.0.dist-info"), {"CL-PKG", "CL-SECRET"}, "CL-VENV"),  # noqa: E501
             (F("§15", "HIGH", R + "/sp/certifi-2026.9.1.dist-info", "emudhra-ca-oct2026", content=False), None, set(), "CL-PKG"),
             (F("§15", "HIGH", R + "/Math_Symbol.js", "chaindrop-keyv"), ("quarantine", "self", R + "/Math_Symbol.js"), {"CL-IR", "CL-SECRET"}, "CL-IR"),
@@ -254,8 +254,10 @@ class TestFindings11Draft(unittest.TestCase):
         self.assertEqual(triage.validate_input(inp), [])
         d = triage.draft(inp, NOW, "alice")
         self.assertEqual(d["scope"], {"roots": [R], "home": None})
+        # ロックファイルの finding は related npm_installed があっても auto にしない（§9.6。再生成まで残る）
         a = d["items"][0]["constraints"]["suggested_actions"][0]["action"]
-        self.assertEqual((a["type"], a["relation"], a["target"]), ("quarantine", "npm_installed", R + "/node_modules/keyv"))
+        self.assertEqual((a["type"], a["relation"], a["target"], a["params"]["template"]),
+                         ("checklist", "self", R + "/package-lock.json", "CL-LOCKFILE"))
         p = adopt(d)
         final = triage.finalize(inp, p, now=NOW)
         self.assertEqual(final["items"][0]["action"]["evidence"], {"kind": "file", "hash": SHA})
@@ -274,6 +276,77 @@ class TestFindings11Draft(unittest.TestCase):
         self.assertEqual(triage.evidence_of(x)["kind"], "detail")
         y = F("§17", "HIGH", R + "/.mcp.json")
         self.assertEqual(triage.evidence_of(y), {"kind": "file", "hash": y["evidence_hash"]})
+
+
+class TestLockfileFindingStaysOpen(unittest.TestCase):
+    """ロックファイルの finding（pkg.lockfile_compromised、または §15 のロックファイル）は、インストール済みの実体の隔離では
+    消えない（ZES はロックファイルの中身を見て再び報告する）。隔離は node_modules/<name>/package.json の finding の auto で行い、
+    ロックファイルの finding は再生成の手順を含む checklist（CL-LOCKFILE）として作業者が完了にするまで残す（§9.6・I-13）。"""
+
+    def setUp(self):
+        subj = {"ecosystem": "npm", "package": "keyv", "version": "6.0.0", "safe_version": "5.x", "fixed_versions": []}
+        self.lock = F("§15", "CRITICAL", R + "/package-lock.json", "chaindrop-keyv", kind="pkg.lockfile_compromised", subject=subj,
+                      related=[{"relation": "npm_installed", "path": R + "/node_modules/keyv"}], evidence={"kind": "file", "hash": SHA})
+        self.inst = F("§15", "CRITICAL", R + "/node_modules/keyv/package.json", "chaindrop-keyv", kind="pkg.compromised",
+                      subject=subj, evidence={"kind": "file", "hash": "sha256:" + "b" * 64})
+        self.inp = make_input([self.lock, self.inst], version="1.1", scope=False, scan_roots=[R])
+        self.draft = triage.draft(self.inp, NOW, "alice", plan_id="11111111-2222-4333-8444-555555555555")
+
+    def sug(self, plan, x):
+        return next(it for it in plan["items"] if it["finding_id"] == x["id"])["constraints"]["suggested_actions"]
+
+    def test_draft_quarantine_is_the_installed_finding_and_lockfile_is_checklist(self):
+        ls = self.sug(self.draft, self.lock)
+        self.assertEqual([s["label"] for s in ls], ["checklist"])
+        steps = ls[0]["action"]["params"]["steps"]
+        self.assertEqual(ls[0]["action"]["params"]["template"], "CL-LOCKFILE")
+        regen = [s for s in steps if "npm uninstall keyv" in s["text"]]
+        self.assertEqual(len(regen), 1)
+        self.assertTrue(regen[0]["blocking"])
+        self.assertNotIn("verify", ls[0]["action"]["params"])  # GER が自動で完了にしない（作業者の ger confirm だけ）
+        ia = next(s for s in self.sug(self.draft, self.inst) if s["label"] == "auto")["action"]
+        self.assertEqual((ia["type"], ia["relation"], ia["target"]), ("quarantine", "npm_pkg_dir", R + "/node_modules/keyv"))
+        self.assertNotIn("group", ia)  # ロックファイルの finding を同じ group に入れない
+        final = triage.finalize(self.inp, adopt(self.draft), now=NOW)
+        types = {it["finding_id"]: it["action"]["type"] for it in final["items"]}
+        self.assertEqual(types, {self.lock["id"]: "checklist", self.inst["id"]: "quarantine"})
+
+    def test_lockfile_alone_is_checklist_too(self):
+        inp = make_input([self.lock], version="1.1", scope=False, scan_roots=[R])
+        d = triage.draft(inp, NOW, "alice")
+        self.assertEqual([s["label"] for s in self.sug(d, self.lock)], ["checklist"])
+
+    def test_i13_rejects_auto_on_lockfile_finding(self):
+        p = adopt(self.draft)
+        it = next(i for i in p["items"] if i["finding_id"] == self.lock["id"])
+        q = copy.deepcopy(p)
+        qa = next(i for i in q["items"] if i["finding_id"] == self.lock["id"])
+        qa["action"] = {"type": "quarantine", "target": R + "/node_modules/keyv", "relation": "npm_installed", "finding_path": self.lock["path"],
+                        "params": {"kind": "tree", "tree_sha256": SHA, "subject": {"name": "keyv", "version": "6.0.0"}},
+                        "followup": [remedy.checklist(t, self.lock["path"]) for t in ("CL-PKG", "CL-SECRET")]}
+        v = triage.check(self.inp, q, now=NOW)
+        self.assertIn("I-13", codes(v), v)
+        self.assertTrue(any("ロックファイル" in x.message for x in v), v)
+        # findings 1.0（kind なし）でも §15 のロックファイルなら同じ
+        lock10 = {k: v for k, v in self.lock.items() if k not in ("kind", "subject", "related", "evidence")}
+        inst10 = {k: v for k, v in self.inst.items() if k not in ("kind", "subject", "evidence")}
+        inp10 = make_input([lock10, inst10])
+        q10 = adopt(triage.draft(inp10, NOW, "alice"))
+        self.assertEqual(triage.check(inp10, q10, now=NOW), [])
+        qa10 = next(i for i in q10["items"] if i["finding_id"] == lock10["id"])
+        qa10["action"] = copy.deepcopy(qa["action"])
+        self.assertIn("I-13", codes(triage.check(inp10, q10, now=NOW)))
+        # checklist でも再生成の手順（CL-LOCKFILE）を含まない雛形は不可
+        q = copy.deepcopy(p)
+        qa = next(i for i in q["items"] if i["finding_id"] == self.lock["id"])
+        qa["action"]["params"] = remedy.checklist("CL-REVIEW", self.lock["path"])
+        self.assertIn("I-13", codes(triage.check(self.inp, q, now=NOW)))
+        # 再生成の手順を書き換える・外すのも不可
+        q = copy.deepcopy(p)
+        qa = next(i for i in q["items"] if i["finding_id"] == self.lock["id"])
+        qa["action"]["params"]["steps"] = [s for s in qa["action"]["params"]["steps"] if "npm uninstall" not in s["text"]]
+        self.assertIn("I-13", codes(triage.check(self.inp, q, now=NOW)))
+        self.assertEqual(it["action"]["type"], "checklist")
 
 
 class TestPlanHashUnchanged(unittest.TestCase):
