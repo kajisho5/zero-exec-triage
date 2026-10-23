@@ -72,6 +72,14 @@ def _output_problem(out: str, sources: list[str]) -> str | None:
             if os.path.realpath(out) == os.path.realpath(src) or (
                     os.path.exists(out) and os.path.exists(src) and os.path.samefile(out, src)):
                 return f"-o が入力ファイルと同じです: {out}"
+        # 監査ログ（とそのディレクトリ）を出力で置き換えるとハッシュチェーンが壊れる
+        log, logd = os.path.realpath(audit.log_path()), os.path.realpath(audit.log_dir())
+        if os.path.realpath(out) == log or (
+                os.path.exists(out) and os.path.exists(log) and os.path.samefile(out, log)):
+            return f"-o に監査ログは指定できません: {out}"
+        for p in (os.path.realpath(out), os.path.realpath(parent)):
+            if p == logd or os.path.commonpath([p, logd]) == logd:
+                return f"-o に監査ログのディレクトリ内は指定できません: {out}"
     except (OSError, ValueError) as e:  # ValueError: パスに NUL を含む
         return f"-o を検査できません（{e}）"
     return None

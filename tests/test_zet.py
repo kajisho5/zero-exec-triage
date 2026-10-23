@@ -735,6 +735,39 @@ class TestRegressionsR2(unittest.TestCase):
         self.assertEqual("output_hash" in rec, code == 0)
 
 
+class TestRegressionsR3(unittest.TestCase):
+    """bughunt-r3 で見つかった不具合の回帰テスト。"""
+
+    setUp = TestRegressions.setUp
+    tearDown = TestRegressions.tearDown
+    run_cli = TestCliAndAudit.run_cli
+    audit_records = TestRegressionsR2.audit_records
+
+    # 1. -o に監査ログ（とそのディレクトリ内）は指定できない。verify_chain は object 以外の行で落ちない
+    def test_output_cannot_replace_audit_log(self):
+        d = self.d
+        (d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
+        args = ("validate", str(d / "in.json"), "--operator", "alice")
+        self.assertEqual(self.run_cli(*args)[0], 0)
+        log = audit.log_path()
+        os.link(log, d / "hard-log")
+        (d / "sym-log").symlink_to(log)
+        (d / "sym-dir").symlink_to(audit.log_dir())
+        before = log.read_bytes()
+        for out in (str(log), str(d / "log" / "." / "zet-audit.jsonl"), str(d / "hard-log"), str(d / "sym-log"),
+                    str(d / "log" / "other.json"), str(d / "sym-dir" / "x.json"), str(d / "log")):
+            code, _, err = self.run_cli("finalize", str(d / "in.json"), str(d / "plan.json"), "--operator", "alice", "-o", out)
+            self.assertEqual(code, 64, out)
+            self.assertNotIn("Traceback", err)
+        self.assertEqual(self.run_cli("draft", str(d / "in.json"), "--operator", "alice", "-o", str(log))[0], 64)
+        self.assertEqual(log.read_bytes(), before)
+        self.assertEqual(audit.verify_chain(), [])
+        with open(log, "ab") as f:
+            f.write(b"[1, 2]\n\"str\"\n\xff\n")
+        problems = audit.verify_chain()
+        self.assertEqual(len(problems), 3, problems)
+
+
 def stat_is_fifo(p) -> bool:
     return stat.S_ISFIFO(os.lstat(p).st_mode)
 

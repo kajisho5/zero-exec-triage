@@ -95,8 +95,12 @@ def verify_chain(path: Path | None = None) -> list[str]:
             line = raw.rstrip(b"\n")
             try:
                 rec = json.loads(line)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, UnicodeDecodeError, RecursionError):
                 problems.append(f"line {n}: JSON ではありません")
+                prev = line
+                continue
+            if not isinstance(rec, dict):  # 配列・文字列などの行も報告する（例外にしない）
+                problems.append(f"line {n}: JSON object ではありません")
                 prev = line
                 continue
             want = None if prev is None else "sha256:" + hashlib.sha256(prev).hexdigest()
