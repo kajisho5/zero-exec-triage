@@ -251,6 +251,12 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
                 v.append(Violation("I-3", "exception には recheck_at が必要です", fid))
         elif it["exception_type"] is not None:
             v.append(Violation("I-3", "exception 以外で exception_type が設定されています", fid))
+        if d == "defer" and lv != "INFO":
+            # 期限も理由も無い defer は承認の要らない無期限の例外になる。INFO 以外は reason と recheck_at を必須にする
+            if not (it["reason"] or "").strip():
+                v.append(Violation("I-3", "defer（level_effective が INFO 以外）には reason が必要です", fid))
+            if not it["recheck_at"]:
+                v.append(Violation("I-9", "defer（level_effective が INFO 以外）には recheck_at が必要です", fid))
         if d == "remediate":
             if not (it["owner"] or "").strip():
                 v.append(Violation("I-4", "remediate には owner が必要です", fid))
@@ -306,6 +312,8 @@ def _deadline_violations(it: dict, d: str, lv: str, pol: dict, created: dt.datet
         rc = parse_ts(it["recheck_at"])
         if rc > dec + dt.timedelta(days=pol["decision_window_days"]):
             v.append(Violation("I-9", f"recheck_at が判断ウィンドウ（{pol['decision_window_days']} 日）を超えています", fid))
+        if rc < dec:
+            v.append(Violation("I-9", "recheck_at が判断日より前です", fid))
     return v
 
 

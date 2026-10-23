@@ -80,7 +80,7 @@ ZES の findings を 1 件残らず「直す（remediate）／例外にする（
 4. **選べる判断の制限**（下書きに `allowed_decisions` として注記、確定時には除去）:
    - `skillpact.divergence` 非空 → `exception` 不可（`remediate` / `defer` のみ）
 5. **必要承認数**: `skillpact.diff_anomaly == true` → `approved_by` 2 名以上、`exception` → 1 名以上（判断者以外）
-6. `decision` は空のまま出す（自動で決めない）。INFO の finding だけは `defer`＋`reason: "informational"` を既定値として入れる（要承認 B-1）
+6. `decision` は空のまま出す（自動で決めない）。`level_effective` が INFO の finding だけは `defer`＋`reason: "informational"` を既定値として入れる（要承認 B-1）
 
 ### 3.2 不変条件チェック（`check` / `finalize`）
 

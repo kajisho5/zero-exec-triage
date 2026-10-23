@@ -564,6 +564,28 @@ class TestRegressionsR2(unittest.TestCase):
         v = [x for x in triage.check(self.inp, self.plan) if x.finding_id == an["finding_id"]]
         self.assertIn("承認者が 2 名以上必要です（現在 1 名）", [x.message for x in v])
 
+    # 2. INFO 以外の defer は reason と recheck_at（判断ウィンドウ内）が必須（無期限・無承認の例外にしない）
+    def test_defer_requires_reason_and_recheck_at(self):
+        by_id = {x["id"]: x for x in self.inp["findings"]["findings"]}
+        it = next(i for i in self.plan["items"] if triage.level_effective(by_id[i["finding_id"]]) == "CRITICAL"
+                  and by_id[i["finding_id"]]["skillpact"]["divergence"])
+        it.update(decision="defer", action=None, owner=None, due_at=None, reason="waiting for vendor fix", recheck_at=None)
+        self.assertIn("I-9", codes(triage.check(self.inp, self.plan)))
+        with self.assertRaises(ContractError):
+            triage.finalize(self.inp, self.plan)
+        it.update(recheck_at="2026-10-21T00:00:00Z")  # 判断日より前
+        self.assertIn("I-9", codes(triage.check(self.inp, self.plan)))
+        it.update(recheck_at="2026-10-30T10:00:00Z", reason="  ")
+        self.assertIn("I-3", codes(triage.check(self.inp, self.plan)))
+        it.update(reason="waiting for vendor fix")
+        self.assertEqual(triage.check(self.inp, self.plan), [])
+        # level_effective が INFO の defer は従来どおり reason / recheck_at なしで通る
+        inp = make_input("findings-partial.json")
+        plan = fill(inp, triage.draft(inp, NOW, "alice"))
+        info = next(i for i in plan["items"] if i["level_effective"] == "INFO")
+        info.update(reason=None, recheck_at=None)
+        self.assertEqual(triage.check(inp, plan), [])
+
 
 if __name__ == "__main__":
     unittest.main()
