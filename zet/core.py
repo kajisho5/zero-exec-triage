@@ -1,4 +1,4 @@
-"""ZET の共通部品: 時刻、正規化 JSON、ハッシュ、スキーマ読み込み、原子的書き出し。"""
+"""Shared parts of ZET: time, canonical JSON, hashes, schema loading, atomic writes."""
 from __future__ import annotations
 
 import datetime as dt
@@ -18,24 +18,26 @@ SCHEMAS = ROOT / "schemas"
 
 LEVELS = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 DECISIONS = ("remediate", "exception", "defer")
-# 外部への副作用・コード実行を起こしうる SkillPact 0.8 の効果（GER の G-6 と同じ集合。ger/core.py と一致させる）。
-# read（機密ファイルの読み取りを含む。旧 secrets）と write（作業領域外への書き込みを含む。旧 persist）は単独では含めない
+# SkillPact 0.8 effects that can cause external side effects or code execution (the same set as GER's G-6; keep it equal
+# to ger/core.py). read (includes reading sensitive files; formerly secrets) and write (includes writing outside the
+# workspace; formerly persist) are not included on their own
 RISKY_EFFECTS = ("exec", "network", "spend", "send")
-# 操作種別ごとの可逆性（A-4）。未知の種別は不可逆として扱う（安全側）。GER の操作はどれも可逆
-# （削除する操作は無く、変える前の状態を GER の隔離ストアに残す。checklist はファイルを変えない）
+# Reversibility per operation type (A-4). Unknown types are treated as irreversible (the conservative side). Every GER
+# operation is reversible (none deletes anything; the state before the change stays in GER's quarantine store, and
+# checklist does not change files)
 REVERSIBLE_BY_TYPE = {"chmod": True, "quarantine": True, "edit_json": True, "edit_toml": True, "remove_line": True,
                       "disable_mcp_server": True, "checklist": True, "write_config": False, "rotate_secret": False}
-# GER の操作レジストリ（ger/actions/__init__.py の REGISTRY）にある種別。これ以外は GER が G-5 で拒否する（I-4）
+# Types in GER's operation registry (REGISTRY in ger/actions/__init__.py). GER rejects any other type in G-5 (I-4)
 GER_ACTION_TYPES = frozenset({"chmod", "quarantine", "edit_json", "edit_toml", "remove_line", "disable_mcp_server",
                               "checklist"})
-# ファイルを変える操作（checklist 以外）
+# Operations that change files (everything except checklist)
 FS_CHANGING = GER_ACTION_TYPES - {"checklist"}
 PLAN_SCHEMA_VERSION = "1.1"
-MAX_DEPTH = 64  # GER（ger/core.py）と同じ入れ子の上限。GER が読めない文書を確定させない（I-11）
+MAX_DEPTH = 64  # the same nesting limit as GER (ger/core.py). Do not finalize a document that GER cannot read (I-11)
 
 
 class ContractError(Exception):
-    """入力・計画が契約に違反している（終了コード 3）。"""
+    """The input or the plan violates the contract (exit code 3)."""
 
     def __init__(self, violations: list["Violation"]):
         super().__init__("; ".join(f"{v.code}: {v.message}" for v in violations))
@@ -55,7 +57,7 @@ class Violation:
         return f"Violation({self.code!r}, {self.message!r}, {self.finding_id!r})"
 
 
-# --- 時刻（RFC 3339 UTC, 秒精度） -------------------------------------------
+# --- Time (RFC 3339 UTC, second precision) ------------------------------------
 def parse_ts(s: str) -> dt.datetime:
     return dt.datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
 
@@ -70,9 +72,9 @@ def now_utc(override: str | None) -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
 
 
-# --- 正規化 JSON / ハッシュ ------------------------------------------------
+# --- Canonical JSON / hashes ---------------------------------------------------
 def canonical(obj: Any) -> bytes:
-    """キー順ソート・区切り ',' ':'・UTF-8。plan_hash と input_hash の基準（GER と同一定義）。"""
+    """Sorted keys, separators ',' ':', UTF-8. The basis of plan_hash and input_hash (the same definition as GER)."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
@@ -85,7 +87,7 @@ def plan_hash(plan: dict) -> str:
     return sha256(canonical(body))
 
 
-# --- 入出力 ------------------------------------------------------------------
+# --- Input and output ------------------------------------------------------------
 def load_json(path: str) -> Any:
     with open(path, "rb") as f:
         raw = f.read()
@@ -93,23 +95,23 @@ def load_json(path: str) -> Any:
         obj = json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, parse_float=_finite_float,
                          object_pairs_hook=_no_duplicate_keys)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as e:
-        raise ContractError([Violation("I-11", f"{path}: JSON として解析できません（{e}）")]) from e
+        raise ContractError([Violation("I-11", f"{path}: cannot be parsed as JSON ({e})")]) from e
     except RecursionError:
-        raise ContractError([Violation("I-11", f"{path}: JSON の入れ子が深すぎます")]) from None
+        raise ContractError([Violation("I-11", f"{path}: JSON is nested too deeply")]) from None
     if _too_deep(obj):
-        raise ContractError([Violation("I-11", f"{path}: JSON の入れ子が深すぎます（最大 {MAX_DEPTH} 段）")])
+        raise ContractError([Violation("I-11", f"{path}: JSON is nested too deeply (maximum depth: {MAX_DEPTH})")])
     try:
         canonical(obj)
     except RecursionError:
-        raise ContractError([Violation("I-11", f"{path}: JSON の入れ子が深すぎます")]) from None
+        raise ContractError([Violation("I-11", f"{path}: JSON is nested too deeply")]) from None
     except (UnicodeEncodeError, ValueError):
-        # 対になっていないサロゲート（\ud800 など）は正規化 JSON にできない。内容は表示しない
-        raise ContractError([Violation("I-11", f"{path}: UTF-8 で表せない文字列（不正なサロゲート）を含みます")]) from None
+        # an unpaired surrogate (\ud800 and so on) cannot be canonical JSON. The content is not shown
+        raise ContractError([Violation("I-11", f"{path}: contains a string that UTF-8 cannot represent (invalid surrogate)")]) from None
     return obj
 
 
 def _too_deep(obj: Any) -> bool:
-    """GER の _check_depth と同じ数え方（最上位の object / array が 1 段目）。再帰しない。"""
+    """Counts like GER's _check_depth (the top-level object / array is depth 1). Not recursive."""
     stack = [(obj, 1)]
     while stack:
         cur, depth = stack.pop()
@@ -121,28 +123,28 @@ def _too_deep(obj: Any) -> bool:
 
 
 def _reject_constant(name: str) -> Any:
-    raise ValueError(f"非標準の JSON 定数 {name} は受け付けません")
+    raise ValueError(f"the non-standard JSON constant {name} is not accepted")
 
 
 def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:
-    # 重複キーは後勝ちで黙って消える（読む側ごとに解釈が割れる）ため拒否する。キー名は表示しない
+    # with duplicate keys the last one silently wins (readers disagree on the meaning), so they are rejected. The key is not shown
     d: dict = {}
     for k, val in pairs:
         if k in d:
-            raise ValueError("重複したキーがあります")
+            raise ValueError("duplicate key")
         d[k] = val
     return d
 
 
 def _finite_float(s: str) -> float:
     x = float(s)
-    if not math.isfinite(x):  # 1e400 など。書き出すと Infinity（不正な JSON）になる
-        raise ValueError("有限でない数値は受け付けません")
+    if not math.isfinite(x):  # 1e400 and so on. Written out it would be Infinity (invalid JSON)
+        raise ValueError("non-finite numbers are not accepted")
     return x
 
 
 def dumps_pretty(obj: Any) -> str:
-    """出力ファイル・標準出力の書式。深すぎる入れ子は RecursionError、有限でない数値は ValueError。"""
+    """Format of output files and standard output. RecursionError for nesting that is too deep, ValueError for non-finite numbers."""
     return json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n"
 
 
@@ -151,8 +153,8 @@ def write_atomic(path: str, obj: Any) -> None:
 
 
 def write_text_atomic(path: str, text: str) -> None:
-    """一時ファイルに書いてから os.replace。途中で失敗しても部分ファイルを残さない。"""
-    d = os.path.dirname(path) or "."  # -o の事前検査（cli._output_problem）と同じ親ディレクトリ
+    """Write a temporary file, then os.replace. A failure part-way leaves no partial file."""
+    d = os.path.dirname(path) or "."  # the same parent directory as the -o pre-check (cli._output_problem)
     fd, tmp = tempfile.mkstemp(prefix=".zet-", suffix=".tmp", dir=d)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:

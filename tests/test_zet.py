@@ -1,4 +1,4 @@
-"""ZET のテスト。標準ライブラリの unittest のみ（jsonschema は判定一致の確認にだけ任意で使う）。"""
+"""ZET tests. Standard library unittest only (jsonschema is optional and only used to confirm that results agree)."""
 from __future__ import annotations
 
 import copy
@@ -32,7 +32,7 @@ NOW = parse_ts("2026-10-22T10:00:00Z")
 
 
 def setUpModule():
-    os.environ["ZET_ALLOW_NOW_OVERRIDE"] = "1"  # --now はテスト専用
+    os.environ["ZET_ALLOW_NOW_OVERRIDE"] = "1"  # --now is for tests only
 
 
 def tearDownModule():
@@ -54,10 +54,10 @@ def make_input(findings: str = "findings-skillpact.json") -> dict:
 
 
 def fill(inp: dict, plan: dict) -> dict:
-    """下書きを「全件 remediate（できないものは defer）」で埋めた合格計画にする。
+    """Turn the draft into a passing plan with every finding remediated (deferred where that is not possible).
 
-    action.target は finding の path（I-4）。path が null、または他の finding と path が重なるもの
-    （同じ対象への操作は 1 件まで）は defer にする。
+    action.target is the finding's path (I-4). Findings whose path is null or the same as another finding's
+    (at most one operation per target) are deferred.
     """
     by_id = {x["id"]: x for x in inp["findings"]["findings"]}
     p = copy.deepcopy(plan)
@@ -89,13 +89,13 @@ class TestSchemas(unittest.TestCase):
         meta = json.loads((ROOT / "schemas/vendor/VENDOR.json").read_text())
         for f in meta["files"]:
             got = hashlib.sha256((ROOT / f["path"]).read_bytes()).hexdigest()
-            self.assertEqual(got, f["sha256"], f"{f['path']} が VENDOR.json の版と一致しません")
+            self.assertEqual(got, f["sha256"], f"{f['path']} does not match the version in VENDOR.json")
 
     def test_lite_validator_agrees_with_jsonschema(self):
         try:
             from jsonschema import Draft202012Validator
         except ImportError:
-            self.skipTest("jsonschema 未導入（開発依存）")
+            self.skipTest("jsonschema is not installed (development dependency)")
         inp = make_input()
         plan = triage.draft(inp, NOW, "alice")
         final = triage.finalize(inp, fill(inp, plan))
@@ -106,7 +106,7 @@ class TestSchemas(unittest.TestCase):
             ("remediation-plan.schema.json", plan),
             ("remediation-plan.schema.json", final),
         ]
-        # 壊したもの（各スキーマが拒否すべき）
+        # broken documents (each schema must reject them)
         bad_plan = copy.deepcopy(final); bad_plan["items"][0]["constraints"] = {"allowed_decisions": [], "min_approvers": 0}
         bad_plan2 = copy.deepcopy(final); del bad_plan2["plan_hash"]
         bad_plan3 = copy.deepcopy(plan); bad_plan3["plan_hash"] = final["plan_hash"]
@@ -159,18 +159,18 @@ class TestDraft(unittest.TestCase):
 
     def test_constraints_and_elevation(self):
         inp = make_input()
-        # HIGH の乖離 finding を L3 署名済みにすると CRITICAL 相当に引き上がる
+        # a HIGH divergence finding with an L3 signature is raised to CRITICAL
         x = next(f for f in inp["findings"]["findings"] if f.get("skillpact") and f["level"] == "HIGH" and f["skillpact"]["divergence"])
         x["skillpact"]["signed"] = True
         plan = triage.draft(inp, NOW, "alice")
         it = next(i for i in plan["items"] if i["finding_id"] == x["id"])
         self.assertEqual(it["level_effective"], "CRITICAL")
         self.assertNotIn("exception", it["constraints"]["allowed_decisions"])
-        self.assertEqual(it["due_at"], "2026-10-29T10:00:00Z")  # CRITICAL = 7 日
+        self.assertEqual(it["due_at"], "2026-10-29T10:00:00Z")  # CRITICAL = 7 days
 
     def test_draft_never_decides(self):
         plan = triage.draft(make_input(), NOW, "alice")
-        # level_effective が INFO のものだけ defer が既定値。それ以外は判断しない
+        # only level_effective INFO defaults to defer. Nothing else is decided
         self.assertTrue(any(it["level_effective"] == "INFO" for it in plan["items"]))
         for it in plan["items"]:
             self.assertEqual(it["decision"], "defer" if it["level_effective"] == "INFO" else None)
@@ -186,7 +186,7 @@ class TestInvariants(unittest.TestCase):
         for it in self.plan["items"]:
             if pred(self.by_id[it["finding_id"]]):
                 return it
-        raise AssertionError("該当 finding なし")
+        raise AssertionError("no matching finding")
 
     def assertViolates(self, code):
         self.assertIn(code, codes(triage.check(self.inp, self.plan)))
@@ -213,9 +213,9 @@ class TestInvariants(unittest.TestCase):
         it.update(decision="exception", action=None, exception_type=None, reason=None, approved_by=["security-lead"])
         self.assertViolates("I-3")
         it.update(exception_type="risk_accepted", reason="mitigated by network policy", approved_by=["bob"], decided_by="bob")
-        self.assertViolates("I-8")  # bob は承認者リストに無い
+        self.assertViolates("I-8")  # bob is not in the approver list
         it.update(approved_by=["alice"], decided_by="alice")
-        self.assertViolates("I-3")  # 自己承認
+        self.assertViolates("I-3")  # self-approval
         it.update(approved_by=["security-lead"], decided_by="alice")
         self.assertEqual(triage.check(self.inp, self.plan), [])
 
@@ -227,7 +227,7 @@ class TestInvariants(unittest.TestCase):
 
     def test_i4_derived_action_fields(self):
         a = self.plan["items"][0]["action"]
-        a["reversible"] = False  # chmod は可逆
+        a["reversible"] = False  # chmod is reversible
         self.assertViolates("I-4")
         self.setUp(); self.plan["items"][0]["action"]["skillpact_effects"] = []
         it = self.item(lambda x: bool(x.get("skillpact")))
@@ -252,7 +252,7 @@ class TestInvariants(unittest.TestCase):
         self.assertViolates("I-7")
 
     def test_i9_deadline(self):
-        # ZES の §49 は CRITICAL を出さない（署名で重大度を変えない）。ZET が引き上げた CRITICAL で確認する
+        # ZES §49 never reports CRITICAL (a signature does not change the severity). Checked with the CRITICAL that ZET raises
         it = self.item(lambda x: triage.level_effective(x) == "CRITICAL")
         it["due_at"] = "2026-12-31T00:00:00Z"
         self.assertViolates("I-9")
@@ -346,7 +346,7 @@ class TestCliAndAudit(unittest.TestCase):
         self.assertEqual([r["result"] for r in recs], ["ok", "rejected", "ok", "rejected", "ok", "ok"])
         self.assertEqual(recs[-1]["plan_hash"], final["plan_hash"])
         self.assertEqual(audit.verify_chain(), [])
-        # 改ざん検出
+        # tampering is detected
         lines = audit.log_path().read_text().splitlines()
         lines[1] = lines[1].replace('"rejected"', '"ok"')
         audit.log_path().write_text("\n".join(lines) + "\n")
@@ -360,7 +360,7 @@ class TestCliAndAudit(unittest.TestCase):
         self.assertFalse((d / "final.json").exists())
 
     def test_usage_errors(self):
-        self.assertEqual(self.run_cli("validate", str(self.d / "in.json"))[0], 64)  # --operator 必須
+        self.assertEqual(self.run_cli("validate", str(self.d / "in.json"))[0], 64)  # --operator is required
         self.assertEqual(self.run_cli("validate", str(self.d / "in.json"), "--operator", "a b")[0], 64)
         self.assertEqual(self.run_cli("draft", str(self.d / "in.json"), "--operator", "alice", "--now", "yesterday")[0], 64)
 
@@ -370,7 +370,7 @@ class TestCliAndAudit(unittest.TestCase):
 
 
 class TestRegressions(unittest.TestCase):
-    """bughunt-r1 で見つかった不具合の回帰テスト。"""
+    """Regression tests for the bugs found in bughunt-r1."""
 
     def setUp(self):
         self.inp = make_input()
@@ -386,15 +386,15 @@ class TestRegressions(unittest.TestCase):
 
     run_cli = TestCliAndAudit.run_cli
 
-    # 1. pattern の $ は末尾改行の直前に一致してはならない（ECMA の意味）
+    # 1. $ in a pattern must not match just before a trailing newline (ECMA semantics)
     def test_pattern_dollar_does_not_match_before_newline(self):
         it = self.plan["items"][0]
         it.update(decided_by="alice\n", approved_by=["alice"])
         self.assertIn("I-11", codes(triage.check(self.inp, self.plan)))
         from zet.jsonschema_lite import Validator
         self.assertFalse(Validator({"pattern": "^a$"}).is_valid("a\n"))
-        self.assertTrue(Validator({"pattern": "^a\\$$"}).is_valid("a$"))  # エスケープした $ はリテラル
-        self.assertTrue(Validator({"pattern": "^[$]$"}).is_valid("$"))  # 文字クラス内の $ はリテラル
+        self.assertTrue(Validator({"pattern": "^a\\$$"}).is_valid("a$"))  # an escaped $ is a literal
+        self.assertTrue(Validator({"pattern": "^[$]$"}).is_valid("$"))  # $ in a character class is a literal
 
     def test_newline_in_module_and_id_rejected(self):
         inp = make_input("findings-partial.json")
@@ -409,11 +409,11 @@ class TestRegressions(unittest.TestCase):
         self.assertEqual(self.run_cli("draft", str(self.d / "in.json"), "--operator", "ci",
                                       "--plan-id", "00000000-0000-0000-0000-000000000000\n")[0], 64)
 
-    # 2. 確定 plan（plan_hash 付き）は check / finalize でも plan_hash を検証する
+    # 2. check / finalize verify plan_hash of a finalized plan (one with plan_hash)
     def test_check_and_finalize_verify_plan_hash_of_final_plan(self):
         final = triage.finalize(self.inp, self.plan)
         self.assertEqual(triage.check(self.inp, final), [])
-        self.assertEqual(triage.finalize(self.inp, final), final)  # 改ざんが無ければ冪等
+        self.assertEqual(triage.finalize(self.inp, final), final)  # idempotent when nothing was tampered with
         final["items"][0]["action"]["target"] = "/etc/shadow"
         self.assertIn("I-11", codes(triage.check(self.inp, final)))
         with self.assertRaises(ContractError) as cm:
@@ -425,7 +425,7 @@ class TestRegressions(unittest.TestCase):
                                       "--operator", "alice", "-o", str(self.d / "out.json"))[0], 3)
         self.assertFalse((self.d / "out.json").exists())
 
-    # 3. 有限でない数値（1e400 → inf）は読み込みで拒否し、Infinity を書き出さない
+    # 3. non-finite numbers (1e400 → inf) are rejected on load, and Infinity is never written
     def test_non_finite_number_rejected(self):
         self.plan["items"][0]["action"]["params"]["n"] = 1
         raw = json.dumps(self.plan).replace('"n": 1', '"n": 1e400')
@@ -443,10 +443,10 @@ class TestRegressions(unittest.TestCase):
             write_atomic(str(self.d / "nan.json"), {"x": float("nan")})
         self.assertFalse((self.d / "nan.json").exists())
 
-    # 4. 不正なサロゲートは I-11（終了コード 3）。内部エラーでも文書全体を stderr に出さない
+    # 4. an invalid surrogate is I-11 (exit code 3). Even an internal error never prints the whole document to stderr
     def test_lone_surrogate_rejected_without_echo(self):
         self.plan["items"][0]["reason"] = "SECRET-" + "x" * 5000 + "\ud800"
-        (self.d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")  # ensure_ascii で \ud800 のまま書かれる
+        (self.d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")  # ensure_ascii writes it as \ud800
         code, _, err = self.run_cli("check", str(self.d / "in.json"), str(self.d / "plan.json"), "--operator", "alice")
         self.assertEqual(code, 3)
         self.assertIn("I-11", err)
@@ -463,12 +463,12 @@ class TestRegressions(unittest.TestCase):
         self.assertIn("RuntimeError", err)
         self.assertLess(len(err), 400)
 
-    # 5. decided_at は created_at 以上・現在時刻以下（未来の判断日で I-9 の期限を延ばせない）
+    # 5. created_at <= decided_at <= current time (a future decision date cannot extend the I-9 deadlines)
     def test_decided_at_bounded(self):
         it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
         it.update(decided_at="2030-01-01T00:00:00Z", due_at="2030-01-05T00:00:00Z")
         self.assertIn("I-9", codes(triage.check(self.inp, self.plan, now=NOW)))
-        it.update(decided_at="2026-10-21T00:00:00Z", due_at="2026-10-22T00:00:00Z")  # created_at より前
+        it.update(decided_at="2026-10-21T00:00:00Z", due_at="2026-10-22T00:00:00Z")  # before created_at
         self.assertIn("I-9", codes(triage.check(self.inp, self.plan, now=NOW)))
         it.update(decided_at="2026-10-22T10:00:00Z", due_at="2026-10-23T00:00:00Z")
         self.assertEqual(triage.check(self.inp, self.plan, now=NOW), [])
@@ -481,7 +481,7 @@ class TestRegressions(unittest.TestCase):
         self.assertEqual(self.run_cli("check", str(self.d / "in.json"), str(self.d / "plan.json"),
                                       "--operator", "alice", "--now", "2026-10-22T11:00:00Z")[0], 0)
 
-    # 6. held は errors[] のモジュール専用（CRITICAL を held に移して判断を逃れられない）
+    # 6. held is only for modules in errors[] (a CRITICAL cannot escape a decision by moving to held)
     def test_held_only_for_errored_modules(self):
         inp = make_input("findings-partial.json")
         plan = fill(inp, triage.draft(inp, NOW, "alice"))
@@ -499,10 +499,10 @@ class TestRegressions(unittest.TestCase):
         p = triage.draft(inp, NOW, "alice")
         self.assertEqual(triage.check(inp, fill(inp, p)), [])
         h = next(h for h in p["held"] if h["finding_id"] is not None)
-        h["module"] = "§6"  # errors[] にあるが finding の実モジュールではない
+        h["module"] = "§6"  # in errors[] but not the finding's actual module
         self.assertIn("I-10", codes(triage.check(inp, fill(inp, p))))
 
-    # 7. 存在しない日時・範囲外の日時は I-11（--now は 64）で、内部エラーにしない
+    # 7. date-times that do not exist or are out of range are I-11 (64 for --now), not an internal error
     def test_invalid_and_out_of_range_timestamps(self):
         for k, ts in (("decided_at", "2026-13-01T00:00:00Z"), ("due_at", "2026-10-22T10:00:60Z")):
             p = copy.deepcopy(self.plan)
@@ -522,7 +522,7 @@ class TestRegressions(unittest.TestCase):
         self.assertEqual(self.run_cli("draft", str(self.d / "in.json"), "--operator", "alice", "--now", "9999-12-30T00:00:00Z")[0], 64)
         self.assertEqual(self.run_cli("draft", str(self.d / "in.json"), "--operator", "alice", "--now", "2026-13-01T00:00:00Z")[0], 64)
 
-    # 8. 監査ログ: 途中で切れた最終行の後ろには追記しない（R3 F15: 壊れたチェーンには足さない）/ シンボリックリンクのログは拒否
+    # 8. audit log: nothing is appended after a last line that was cut off (R3 F15: never extend a broken chain) / a symlinked log is rejected
     def test_audit_torn_line_and_symlink(self):
         audit.append({"command": "validate"})
         with open(audit.log_path(), "ab") as f:
@@ -531,8 +531,8 @@ class TestRegressions(unittest.TestCase):
         with self.assertRaises(audit.BrokenChain):
             audit.append({"command": "check"})
         self.assertEqual(audit.log_path().read_bytes(), before)
-        self.assertEqual(audit.verify_chain(), ["line 2: 改行で終わっていません（書き込みが途中で切れた可能性）",
-                                                "line 2: JSON ではありません"])
+        self.assertEqual(audit.verify_chain(), ["line 2: does not end with a newline (a write may have been cut off)",
+                                                "line 2: not JSON"])
         target = self.d / "elsewhere.jsonl"
         target.write_bytes(b"")
         audit.log_path().unlink()
@@ -544,13 +544,13 @@ class TestRegressions(unittest.TestCase):
 
 
 class TestRegressionsR2(unittest.TestCase):
-    """bughunt-r2 で見つかった不具合の回帰テスト。"""
+    """Regression tests for the bugs found in bughunt-r2."""
 
     setUp = TestRegressions.setUp
     tearDown = TestRegressions.tearDown
     run_cli = TestCliAndAudit.run_cli
 
-    # 4. 重複キーは I-11（後勝ちで黙って値が変わらない）
+    # 4. duplicate keys are I-11 (the value does not silently change to the last one)
     def test_duplicate_keys_rejected(self):
         raw = json.dumps(self.plan).replace('"decision": "remediate"', '"decision": "remediate", "decision": "exception"', 1)
         (self.d / "plan.json").write_text(raw, encoding="utf-8")
@@ -559,7 +559,7 @@ class TestRegressionsR2(unittest.TestCase):
         self.assertEqual(codes(cm.exception.violations), {"I-11"})
         self.assertEqual(self.run_cli("check", str(self.d / "in.json"), str(self.d / "plan.json"), "--operator", "alice")[0], 3)
 
-    # 7a. 深すぎる入れ子は I-11（終了コード 3）で、内部エラー（70）にしない
+    # 7a. nesting that is too deep is I-11 (exit code 3), not an internal error (70)
     def test_deeply_nested_input_is_contract_error(self):
         (self.d / "deep.json").write_text("[" * 100000 + "]" * 100000, encoding="utf-8")
         with self.assertRaises(ContractError) as cm:
@@ -567,32 +567,32 @@ class TestRegressionsR2(unittest.TestCase):
         self.assertEqual(codes(cm.exception.violations), {"I-11"})
         self.assertEqual(self.run_cli("validate", str(self.d / "deep.json"), "--operator", "alice")[0], 3)
 
-    # 6. draft の自動 defer は level_effective で判断する（引き上げられた INFO を defer にしない）
+    # 6. the automatic defer of draft uses level_effective (a raised INFO is not deferred)
     def test_draft_does_not_auto_defer_elevated_info(self):
         inp = make_input()
         x = next(f for f in inp["findings"]["findings"] if f.get("skillpact") and f["skillpact"]["signed"] and f["skillpact"]["divergence"])
-        x["level"] = "INFO"  # L3 署名済みで乖離があるため CRITICAL に引き上がる
+        x["level"] = "INFO"  # raised to CRITICAL: L3 signature and divergence
         self.assertEqual(triage.validate_input(inp), [])
         it = next(i for i in triage.draft(inp, NOW, "alice")["items"] if i["finding_id"] == x["id"])
         self.assertEqual(it["level_effective"], "CRITICAL")
         self.assertEqual((it["decision"], it["decided_by"], it["reason"]), (None, None, None))
         self.assertEqual(it["due_at"], "2026-10-29T10:00:00Z")
 
-    # 5. 人名の比較は大文字小文字を区別しない（自己承認・承認者数・policy.approvers）
+    # 5. names are compared without case (self-approval, number of approvers, policy.approvers)
     def test_person_names_compared_casefolded(self):
         by_id = {x["id"]: x for x in self.inp["findings"]["findings"]}
         sp = {i["finding_id"]: by_id[i["finding_id"]]["skillpact"] for i in self.plan["items"]}
         it = next(i for i in self.plan["items"] if not sp[i["finding_id"]]["divergence"] and not sp[i["finding_id"]]["diff_anomaly"])
         it.update(decision="exception", action=None, exception_type="risk_accepted", reason="mitigated", decided_by="Alice", approved_by=["alice"])
-        self.assertIn("I-3", codes(triage.check(self.inp, self.plan)))  # 自己承認
+        self.assertIn("I-3", codes(triage.check(self.inp, self.plan)))  # self-approval
         it.update(decided_by="bob", approved_by=["Security-Lead"])
-        self.assertEqual(triage.check(self.inp, self.plan), [])  # policy.approvers の security-lead と同一人物
+        self.assertEqual(triage.check(self.inp, self.plan), [])  # the same person as security-lead in policy.approvers
         an = next(i for i in self.plan["items"] if sp[i["finding_id"]]["diff_anomaly"])
         an["approved_by"] = ["alice", "ALICE"]
         v = [x for x in triage.check(self.inp, self.plan) if x.finding_id == an["finding_id"]]
-        self.assertIn("承認者が 2 名以上必要です（現在 1 名）", [x.message for x in v])
+        self.assertIn("approvers required: at least 2 (current: 1)", [x.message for x in v])
 
-    # 2. INFO 以外の defer は reason と recheck_at（判断ウィンドウ内）が必須（無期限・無承認の例外にしない）
+    # 2. a defer outside INFO requires reason and recheck_at (within the decision window): no open-ended exception without approval
     def test_defer_requires_reason_and_recheck_at(self):
         by_id = {x["id"]: x for x in self.inp["findings"]["findings"]}
         it = next(i for i in self.plan["items"] if triage.level_effective(by_id[i["finding_id"]]) == "CRITICAL"
@@ -601,20 +601,20 @@ class TestRegressionsR2(unittest.TestCase):
         self.assertIn("I-9", codes(triage.check(self.inp, self.plan)))
         with self.assertRaises(ContractError):
             triage.finalize(self.inp, self.plan)
-        it.update(recheck_at="2026-10-21T00:00:00Z")  # 判断日より前
+        it.update(recheck_at="2026-10-21T00:00:00Z")  # before the decision date
         self.assertIn("I-9", codes(triage.check(self.inp, self.plan)))
         it.update(recheck_at="2026-10-30T10:00:00Z", reason="  ")
         self.assertIn("I-3", codes(triage.check(self.inp, self.plan)))
         it.update(reason="waiting for vendor fix")
         self.assertEqual(triage.check(self.inp, self.plan), [])
-        # level_effective が INFO の defer は従来どおり reason / recheck_at なしで通る
+        # a defer with level_effective INFO still passes without reason / recheck_at
         inp = make_input("findings-partial.json")
         plan = fill(inp, triage.draft(inp, NOW, "alice"))
         info = next(i for i in plan["items"] if i["level_effective"] == "INFO")
         info.update(reason=None, recheck_at=None)
         self.assertEqual(triage.check(inp, plan), [])
 
-    # 8. GER が必ず拒否する action（正規化されていない target、chmod の不正な params）は確定させない
+    # 8. actions that GER always rejects (a target that is not normalized, invalid chmod params) are never finalized
     def test_action_shape_matches_ger(self):
         it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
         for target in ("/a/./b", "/a//b", "/a/../b", "/a/b/", "/..", "/a/."):
@@ -631,14 +631,14 @@ class TestRegressionsR2(unittest.TestCase):
         self.assertEqual(triage.check(self.inp, self.plan), [])
         triage.finalize(self.inp, self.plan)
 
-    # 3. --now は ZET_ALLOW_NOW_OVERRIDE=1 のときだけ。使った場合は監査ログに now_override を残す
+    # 3. --now only with ZET_ALLOW_NOW_OVERRIDE=1. When used, the audit log records now_override
     def test_now_override_requires_env_and_is_audited(self):
         args = ("validate", str(self.d / "in.json"), "--operator", "alice", "--now", "2026-10-22T10:00:00Z")
         os.environ.pop("ZET_ALLOW_NOW_OVERRIDE")
         try:
             code, _, err = self.run_cli(*args)
             self.assertEqual(code, 64)
-            self.assertIn("テスト専用", err)
+            self.assertIn("for tests only", err)
             self.assertFalse(audit.log_path().exists())
             self.assertEqual(self.run_cli(*args[:4])[0], 0)
         finally:
@@ -647,7 +647,7 @@ class TestRegressionsR2(unittest.TestCase):
         recs = [json.loads(line) for line in audit.log_path().read_text().splitlines()]
         self.assertEqual([r.get("now_override") for r in recs], [None, True])
 
-    # 7b. 既存のログディレクトリがグループ・他者から書き込み可能、または他人の所有なら拒否（64）
+    # 7b. an existing log directory writable by group or others, or owned by someone else, is rejected (64)
     def test_log_dir_permissions_checked(self):
         logd = self.d / "log"
         logd.mkdir(mode=0o700)
@@ -668,7 +668,7 @@ class TestRegressionsR2(unittest.TestCase):
         p = audit.log_path()
         return [json.loads(line) for line in p.read_text().splitlines()] if p.exists() else []
 
-    # 1. -o は処理の前に検査する（ディレクトリ・存在しないディレクトリ・通常ファイル以外・入力と同じファイル）
+    # 1. -o is checked before processing (directory, missing directory, not a regular file, same file as an input)
     def test_output_path_validated_before_work(self):
         d = self.d
         (d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
@@ -686,7 +686,7 @@ class TestRegressionsR2(unittest.TestCase):
         self.assertTrue(stat_is_fifo(d / "fifo"))
         self.assertEqual(self.audit_records(), [])
 
-    # 1. 書き出しに失敗したら監査ログは ok にしない（output_hash / plan_hash も残さない）
+    # 1. when writing fails, the audit log does not say ok (and has no output_hash / plan_hash)
     def test_output_write_failure_not_audited_as_ok(self):
         d = self.d
         (d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
@@ -727,7 +727,7 @@ class TestRegressionsR2(unittest.TestCase):
 
     def test_stdout_enospc_via_dev_full(self):
         if not os.path.exists("/dev/full"):
-            self.skipTest("/dev/full がありません")
+            self.skipTest("/dev/full does not exist")
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "ZET_LOG_DIR": str(self.d / "log")}
         with open("/dev/full", "w") as full:
             r = subprocess.run([str(ROOT / "bin" / "zet"), "draft", str(self.d / "in.json"), "--operator", "alice"],
@@ -736,7 +736,7 @@ class TestRegressionsR2(unittest.TestCase):
         self.assertNotIn(b"Traceback", r.stderr)
         self.assertEqual([x["result"] for x in self.audit_records()], ["error"])
 
-    # 1. 入れ子の深い params: 出力できたときだけ ok（現在は 64 段を超えるため読み込み時に I-11 で 3 になる）
+    # 1. deeply nested params: ok only when the output was written (now more than 64 levels, so I-11 and 3 on load)
     def test_deep_params_audit_matches_output(self):
         it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
         it["action"] = {"type": "write_config", "target": "/srv/app/config", "params": {"deep": "DEEP"}}
@@ -753,14 +753,14 @@ class TestRegressionsR2(unittest.TestCase):
 
 
 class TestRegressionsR3(unittest.TestCase):
-    """bughunt-r3 で見つかった不具合の回帰テスト。"""
+    """Regression tests for the bugs found in bughunt-r3."""
 
     setUp = TestRegressions.setUp
     tearDown = TestRegressions.tearDown
     run_cli = TestCliAndAudit.run_cli
     audit_records = TestRegressionsR2.audit_records
 
-    # 1. -o に監査ログ（とそのディレクトリ内）は指定できない。verify_chain は object 以外の行で落ちない
+    # 1. -o cannot be the audit log (or inside its directory). verify_chain does not fail on lines that are not objects
     def test_output_cannot_replace_audit_log(self):
         d = self.d
         (d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
@@ -784,7 +784,7 @@ class TestRegressionsR3(unittest.TestCase):
         problems = audit.verify_chain()
         self.assertEqual(len(problems), 3, problems)
 
-    # 2. 末尾の / と、与えられたパスのままの親ディレクトリを処理の前に検査する（書き出し時に失敗させない）
+    # 2. a trailing / and the parent directory as given are checked before processing (no failure when writing)
     def test_output_trailing_slash_and_parent_as_given(self):
         d = self.d
         (d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
@@ -793,7 +793,7 @@ class TestRegressionsR3(unittest.TestCase):
                     str(d / "existing.json" / ".." / "x.json")):
             code, _, err = self.run_cli("finalize", str(d / "in.json"), str(d / "plan.json"), "--operator", "alice", "-o", out)
             self.assertEqual(code, 64, out)
-            self.assertNotIn("出力を書き出せません", err)
+            self.assertNotIn("cannot write the output", err)
             self.assertEqual(self.run_cli("draft", str(d / "in.json"), "--operator", "alice", "-o", out)[0], 64, out)
         self.assertEqual(self.audit_records(), [])
         self.assertEqual((d / "existing.json").read_text(), "{}")
@@ -806,7 +806,7 @@ class TestRegressionsR3(unittest.TestCase):
             os.chdir(cwd)
         self.assertTrue((d / "rel.json").exists())
 
-    # 3. 先頭の // は normpath で残るが GER は拒否する。// はどこにあっても I-4
+    # 3. normpath keeps a leading // but GER rejects it. // anywhere is I-4
     def test_target_with_leading_double_slash_rejected(self):
         it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
         for target in ("//tmp/x/t", "//", "//srv"):
@@ -816,19 +816,19 @@ class TestRegressionsR3(unittest.TestCase):
             with self.assertRaises(ContractError):
                 triage.finalize(self.inp, p)
 
-    # 4. UTF-8 でないロケール（ASCII）でも標準出力の JSON は UTF-8 のまま書き、例外にしない
+    # 4. in a non-UTF-8 locale (ASCII) the JSON on standard output is still written as UTF-8, without an exception
     def test_non_utf8_locale_stdout(self):
-        inp = make_input("findings-partial.json")  # errors[].module に非 ASCII 文字（§）を含む
+        inp = make_input("findings-partial.json")  # errors[].module contains a non-ASCII character (§)
         (self.d / "partial.json").write_text(json.dumps(inp, ensure_ascii=False), encoding="utf-8")
         (self.d / "bad.json").write_text("{}", encoding="utf-8")
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "ZET_LOG_DIR": str(self.d / "log"),
                "LC_ALL": "C", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0"}
-        # bin/zet は python3 -I（C ロケールでは UTF-8 モードになる）ため、ロケールの影響を受ける形で直接起動する
+        # bin/zet uses python3 -I (UTF-8 mode in the C locale), so start it directly in a way the locale affects
         cmd = ["python3", str(ROOT / "zet" / "__main__.py")]
         probe = subprocess.run(cmd[:1] + ["-c", "import sys; print(sys.stdout.encoding)"], env=env,
                                capture_output=True, text=True, timeout=60)
         if probe.stdout.strip().lower() not in ("ascii", "ansi_x3.4-1968", "us-ascii"):
-            self.skipTest(f"ASCII ロケールを再現できません（{probe.stdout.strip()}）")
+            self.skipTest(f"cannot reproduce an ASCII locale ({probe.stdout.strip()})")
         r = subprocess.run(cmd + ["draft", str(self.d / "partial.json"), "--operator", "alice"],
                            env=env, capture_output=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr.decode("utf-8", "replace"))
@@ -841,18 +841,18 @@ class TestRegressionsR3(unittest.TestCase):
         self.assertNotIn(b"Traceback", r.stderr)
         self.assertEqual([x["result"] for x in self.audit_records()], ["ok", "rejected"])
 
-    # 5a. remediate の action.target が重複する計画は GER が拒否するため確定させない（I-4）
+    # 5a. a plan with duplicate remediate action.target is never finalized, because GER rejects it (I-4)
     def test_duplicate_action_target_rejected(self):
         rem = [i for i in self.plan["items"] if i["decision"] == "remediate"]
         self.assertGreaterEqual(len(rem), 2)
         rem[1]["action"]["target"] = rem[0]["action"]["target"]
         v = triage.check(self.inp, self.plan)
         self.assertEqual({(x.code, x.finding_id) for x in v}, {("I-4", rem[1]["finding_id"])})
-        self.assertTrue(any("重複" in x.message for x in v))
+        self.assertTrue(any("is the same as for" in x.message for x in v))
         with self.assertRaises(ContractError):
             triage.finalize(self.inp, self.plan)
 
-    # 5b. GER の操作レジストリに無い種別（write_config など）は確定させない（I-4）
+    # 5b. types not in GER's operation registry (write_config and so on) are never finalized (I-4)
     def test_unsupported_action_type_rejected(self):
         it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
         for t, params in (("write_config", {"mode": "0600"}), ("rotate_secret", {}), ("chmodx", {"mode": "0600"})):
@@ -862,7 +862,7 @@ class TestRegressionsR3(unittest.TestCase):
             with self.assertRaises(ContractError):
                 triage.finalize(self.inp, p)
 
-    # 5c. GER と同じく 64 段を超える入れ子は I-11（GER が読めない文書を確定させない）
+    # 5c. as in GER, nesting deeper than 64 levels is I-11 (never finalize a document GER cannot read)
     def test_nesting_depth_limit_matches_ger(self):
         for depth, ok in ((64, True), (65, False)):
             (self.d / "deep.json").write_text("[" * depth + "]" * depth, encoding="utf-8")
@@ -883,7 +883,7 @@ class TestRegressionsR3(unittest.TestCase):
 
 
 class TestRegressionsR3Fixes(unittest.TestCase):
-    """round 3 の指摘（F5 / F7 / F8 / F10 / F14 / F15）の回帰テスト。"""
+    """Regression tests for the round 3 findings (F5 / F7 / F8 / F10 / F14 / F15)."""
 
     setUp = TestRegressions.setUp
     tearDown = TestRegressions.tearDown
@@ -896,7 +896,7 @@ class TestRegressionsR3Fixes(unittest.TestCase):
     def finding(self, fid):
         return next(x for x in self.inp["findings"]["findings"] if x["id"] == fid)
 
-    # F7: action.target は finding の path そのもの（別のパス・配下のパス・path が null の finding は不可）
+    # F7: action.target is exactly the finding's path (not another path, not a path below it, not for a finding whose path is null)
     def test_f7_target_must_equal_finding_path(self):
         it = self.remediate_item()
         path = self.finding(it["finding_id"])["path"]
@@ -906,7 +906,7 @@ class TestRegressionsR3Fixes(unittest.TestCase):
             self.remediate_item(p)["action"]["target"] = target
             v = triage.check(self.inp, p)
             self.assertIn(("I-4", it["finding_id"]), {(x.code, x.finding_id) for x in v}, target)
-            self.assertTrue(any("finding の path" in x.message for x in v), target)
+            self.assertTrue(any("finding's path" in x.message for x in v), target)
             with self.assertRaises(ContractError):
                 triage.finalize(self.inp, p)
         inp = copy.deepcopy(self.inp)
@@ -914,7 +914,7 @@ class TestRegressionsR3Fixes(unittest.TestCase):
         x["path"] = None
         self.assertTrue(any("null" in v.message for v in triage.check(inp, self.plan)))
 
-    # F7: ZET は現在の mode を知らないため、静的に分かる緩和（world-writable、特殊ビット）を拒否する
+    # F7: ZET does not know the current mode, so loosening that is visible statically (world-writable, special bits) is rejected
     def test_f7_chmod_mode_cannot_be_world_writable_or_special(self):
         for mode, ok in (("0600", True), ("0644", True), ("0000", True), ("0666", False), ("0602", False),
                          ("0777", False), ("04755", False), ("02755", False), ("01777", False)):
@@ -922,7 +922,7 @@ class TestRegressionsR3Fixes(unittest.TestCase):
             self.remediate_item(p)["action"]["params"] = {"mode": mode}
             self.assertEqual(not any(v.code == "I-4" for v in triage.check(self.inp, p)), ok, mode)
 
-    # F5: --now で作った plan には now_override: true を残す（draft で使った場合も finalize に引き継ぐ）
+    # F5: a plan made with --now keeps now_override: true (when used in draft, finalize carries it over)
     def test_f5_now_override_recorded_in_plan(self):
         final = triage.finalize(self.inp, self.plan, now=NOW)
         self.assertNotIn("now_override", final)
@@ -933,7 +933,7 @@ class TestRegressionsR3Fixes(unittest.TestCase):
         d = triage.draft(self.inp, NOW, "alice", now_override=True)
         self.assertIs(d["now_override"], True)
         self.assertIs(triage.finalize(self.inp, fill(self.inp, d), now=NOW)["now_override"], True)
-        # スキーマ: 省略は従来どおり有効、false は不可（省略と同じ意味の別表現を作らない）
+        # schema: omitting it is still valid, false is not (no second way to say the same as omitting it)
         bad = copy.deepcopy(final); bad["now_override"] = False; bad["plan_hash"] = plan_hash(bad)
         self.assertIn("I-11", codes(triage.check(self.inp, bad, final=True)))
         (self.d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
@@ -942,11 +942,11 @@ class TestRegressionsR3Fixes(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIs(json.loads((self.d / "final.json").read_text())["now_override"], True)
 
-    # F8: 入力由来の文字列（キー名など）に含まれる ESC・C1 制御文字をそのまま端末に出さない
+    # F8: ESC and C1 controls in strings from the input (keys and so on) never reach the terminal as they are
     def test_f8_control_characters_escaped_in_messages(self):
         from zet.jsonschema_lite import safe_text
         self.assertEqual(safe_text("a\x1b]0;X\x07\x9b\u202eb\\c"), "a\\x1b]0;X\\x07\\x9b\\u202eb\\c")
-        self.assertEqual(safe_text(safe_text("a\x1b")), "a\\x1b")  # 冪等（検証器と CLI の両方で適用しても二重にしない）
+        self.assertEqual(safe_text(safe_text("a\x1b")), "a\\x1b")  # idempotent (applying it in both the validator and the CLI does not escape twice)
         bad = dict(self.inp); bad["x\x1b]0;PWNED\x07\x1b[2J\x9b"] = 1
         (self.d / "bad.json").write_text(json.dumps(bad), encoding="utf-8")
         code, _, err = self.run_cli("validate", str(self.d / "bad.json"), "--operator", "alice")
@@ -956,7 +956,7 @@ class TestRegressionsR3Fixes(unittest.TestCase):
             self.assertNotIn(c, err)
         self.assertIn("unknown field 'x\\x1b]0;PWNED\\x07\\x1b[2J\\x9b'", err)
 
-    # F10: skillpact_effects は SkillPact 0.8 の 6 効果だけ。危険な効果を宣言したスキルの remediate は承認者 2 名（GER G-6 と同じ）
+    # F10: skillpact_effects are only the 6 SkillPact 0.8 effects. remediate on a skill that declares a risky effect needs 2 approvers (as GER G-6)
     def test_f10_effects_enum_and_risky_effects_need_two_approvers(self):
         final = triage.finalize(self.inp, self.plan)
         for eff in ("EXEC", " exec ", "bogus", "secrets"):
@@ -972,20 +972,20 @@ class TestRegressionsR3Fixes(unittest.TestCase):
         it["approved_by"] = ["security-lead", "platform-owner"]
         self.assertEqual(triage.check(self.inp, self.plan), [])
 
-    # F14: 未実装の skillpact_policy の項目は「予約・未実装」として拒否する
+    # F14: unimplemented skillpact_policy fields are rejected as reserved and not implemented
     def test_f14_reserved_skillpact_policy_fields_rejected(self):
         for k, val in (("diff_anomaly_threshold", 0.3), ("destructive_requires_human", True), ("destructive_requires_human", False)):
             inp = copy.deepcopy(self.inp); inp["skillpact_policy"][k] = val
             v = triage.validate_input(inp)
-            self.assertEqual([(x.code, k in x.message and "予約" in x.message) for x in v], [("SP", True)], k)
+            self.assertEqual([(x.code, k in x.message and "reserved" in x.message) for x in v], [("SP", True)], k)
         self.assertEqual(triage.validate_input(self.inp), [])
 
-    # F14 / F1: 確定 plan は evidence_hash と skillpact の要約を持ち、check は入力と一致することを確かめる
+    # F14 / F1: a finalized plan has evidence_hash and the skillpact summary, and check confirms that they match the input
     def test_f14_evidence_hash_and_skillpact_summary_carried(self):
         final = triage.finalize(self.inp, self.plan)
         for it in final["items"]:
             x = self.finding(it["finding_id"])
-            if it["action"]:  # plan 1.1: evidence（kind と hash）。1.0 の evidence_hash は持たない
+            if it["action"]:  # plan 1.1: evidence (kind and hash). No 1.0 evidence_hash
                 self.assertEqual(it["action"]["evidence"]["hash"], x["evidence_hash"])
                 self.assertEqual(it["action"]["evidence"], triage.evidence_of(x))
                 self.assertNotIn("evidence_hash", it["action"])
@@ -1006,10 +1006,10 @@ class TestRegressionsR3Fixes(unittest.TestCase):
         del it["skillpact"]; p["plan_hash"] = plan_hash(p)
         self.assertIn("I-5", codes(triage.check(self.inp, p, final=True)))
 
-    # F15: zet verify-log と、壊れたチェーンへの追記の拒否
+    # F15: zet verify-log, and refusing to append to a broken chain
     def test_f15_verify_log_and_refuse_append_to_broken_chain(self):
         code, _, err = self.run_cli("verify-log")
-        self.assertEqual(code, 64, err)  # まだログが無い
+        self.assertEqual(code, 64, err)  # no log yet
         for _ in range(3):
             self.assertEqual(self.run_cli("validate", str(self.d / "in.json"), "--operator", "alice")[0], 0)
         code, _, err = self.run_cli("verify-log")
@@ -1017,20 +1017,20 @@ class TestRegressionsR3Fixes(unittest.TestCase):
         self.assertIn("3", err)
         log = audit.log_path()
         lines = log.read_bytes().splitlines(keepends=True)
-        # 末尾の行の prev_hash を書き換える（途中の行の改ざんは verify-log が検出する）
+        # rewrite prev_hash of the last line (verify-log detects tampering with lines in the middle)
         rec = json.loads(lines[-1]); rec["prev_hash"] = "sha256:" + "0" * 64
         log.write_bytes(b"".join(lines[:-1]) + json.dumps(rec).encode() + b"\n")
         code, _, err = self.run_cli("verify-log", str(log))
         self.assertEqual(code, 3)
-        self.assertIn("line 3: prev_hash 不一致", err)
+        self.assertIn("line 3: prev_hash mismatch", err)
         before = log.read_bytes()
         code, _, err = self.run_cli("validate", str(self.d / "in.json"), "--operator", "alice")
         self.assertEqual(code, 64)
         self.assertIn("verify-log", err)
-        self.assertEqual(log.read_bytes(), before)  # 何も追記しない
+        self.assertEqual(log.read_bytes(), before)  # nothing is appended
         with self.assertRaises(audit.BrokenChain):
             audit.append({"command": "validate"})
-        # 途中の行の破損は verify-log で検出（末尾が健全なら追記はできる）
+        # a broken line in the middle is found by verify-log (appending still works while the end is intact)
         log.write_bytes(lines[0] + b"garbage\n")
         self.assertEqual(self.run_cli("verify-log")[0], 3)
 
@@ -1040,8 +1040,8 @@ def stat_is_fifo(p) -> bool:
 
 
 class TestLauncherNoSite(unittest.TestCase):
-    """bin/zet は site を読み込まない（-S）。site-packages の .pth は import site で実行されるため、
-    ツール自身の中でコードを実行させないには -I だけでは足りない。"""
+    """bin/zet does not load site (-S). .pth files in site-packages run on import site, so -I alone is not enough
+    to keep code from running inside the tool itself."""
 
     def test_launcher_passes_I_and_S(self):
         with tempfile.TemporaryDirectory() as d:

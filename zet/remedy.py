@@ -1,11 +1,12 @@
-"""finding → 修復の対応表（GER 修復能力拡張 設計書 §2 / §6.1 Phase 1）。
+"""Mapping from findings to remediation (GER remediation extension design, §2 / §6.1 Phase 1).
 
-ZET はファイルシステムを見ない。ここで作るのは提案（draft の constraints.suggested_actions）と、
-確定前の検査（I-4 の関係・I-13 の必須の後続作業）に使う字句上の規則だけ。GER は計画を信用せず、
-同じ関係・危険パターンを現在のファイルシステムに対して自分で評価し直す。
+ZET never looks at the file system. This module only builds suggestions (constraints.suggested_actions in
+the draft) and the lexical rules used by the checks before finalization (I-4 relations, I-13 required
+follow-up work). GER does not trust the plan: it evaluates the same relations and hazard patterns again
+against the current file system.
 
-findings 1.0 では module・path・level・campaign から判断する（detail の文章は解析しない）。
-findings 1.1 の kind / subject / related があれば、それを優先する。
+With findings 1.0 the decision uses module, path, level and campaign (the detail text is never parsed).
+When findings 1.1 provides kind / subject / related, those take precedence.
 """
 from __future__ import annotations
 
@@ -13,123 +14,129 @@ import hashlib
 import posixpath
 import re
 
-# --- チェックリストの雛形（閉じた表）。{path} は finding の path に置き換える -------------------------
+from .legacy_templates import PATH_NONE_JA, TEMPLATES_JA
+
+# --- Checklist templates (closed table). {path} is replaced with the finding's path ----------------------
 _T = {
     "CL-PKG": [
-        ("この作業ツリーで npm ci / npm install / pip install -r / bundle install を実行しない（ロックファイルが侵害版・脆弱版を再び取得する）。対象: {path}", True),
-        ("~/.npmrc に ignore-scripts=true、環境変数に PIP_REQUIRE_VIRTUALENV=true と PYTHONNOUSERSITE=1 を設定する", True),
-        ("依存の指定を安全版・修正版に変え、秘密情報の無い隔離環境でロックファイルを再生成する（npm install --ignore-scripts / poetry lock / uv lock / bundle lock --update / cargo update -p など）", True),
-        ("npm ls <name> / pip show / bundle info / cargo tree で侵害版・脆弱版が残っていないことを確かめる", True),
-        ("侵害版がインストール・実行された可能性があれば CL-SECRET を実施する", True),
-        ("ZES で再スキャンし、この finding が消えたことを確かめる", True),
+        ("Do not run npm ci / npm install / pip install -r / bundle install in this working tree (the lockfile would fetch the compromised or vulnerable version again). Target: {path}", True),  # noqa: E501
+        ("Set ignore-scripts=true in ~/.npmrc, and set the environment variables PIP_REQUIRE_VIRTUALENV=true and PYTHONNOUSERSITE=1", True),
+        ("Change the dependency specification to a safe or fixed version, and regenerate the lockfile in an isolated environment without secrets (npm install --ignore-scripts / poetry lock / uv lock / bundle lock --update / cargo update -p, and so on)", True),  # noqa: E501
+        ("Confirm with npm ls <name> / pip show / bundle info / cargo tree that no compromised or vulnerable version remains", True),
+        ("If the compromised version may have been installed or executed, carry out CL-SECRET", True),
+        ("Rescan with ZES and confirm that this finding is gone", True),
     ],
     "CL-LOCKFILE": [
-        ("この作業ツリーで npm ci / npm install / yarn install / pnpm install を実行しない（ロックファイルが侵害版を再び取得する）。対象: {path}", True),
-        ("~/.npmrc に ignore-scripts=true を設定する", True),
-        ("依存を取り除いてから（npm uninstall {pkg}。yarn remove / pnpm remove）、または安全版に固定してから（npm install {pkg}@<安全版> --ignore-scripts）、秘密情報の無い隔離環境でロックファイルを再生成する。GER はロックファイルを書き換えない。node_modules の実体を隔離してもこの finding は残り、作業者が再生成して完了にする", True),  # noqa: E501
-        ("npm ls {pkg} で、侵害版が node_modules にもロックファイルにも残っていないことを確かめる", True),
-        ("侵害版がインストール・実行された可能性があれば CL-SECRET を実施する", True),
-        ("ZES で再スキャンし、この finding が消えたことを確かめる", True),
+        ("Do not run npm ci / npm install / yarn install / pnpm install in this working tree (the lockfile would fetch the compromised version again). Target: {path}", True),  # noqa: E501
+        ("Set ignore-scripts=true in ~/.npmrc", True),
+        ("Remove the dependency (npm uninstall {pkg}; yarn remove / pnpm remove) or pin it to a safe version (npm install {pkg}@<safe-version> --ignore-scripts), then regenerate the lockfile in an isolated environment without secrets. GER does not rewrite lockfiles. Quarantining the installed copy in node_modules does not clear this finding: the operator regenerates the lockfile and marks this step done", True),  # noqa: E501
+        ("Confirm with npm ls {pkg} that the compromised version remains neither in node_modules nor in the lockfile", True),
+        ("If the compromised version may have been installed or executed, carry out CL-SECRET", True),
+        ("Rescan with ZES and confirm that this finding is gone", True),
     ],
     "CL-VENV": [
-        ("侵害版・脆弱版を含む仮想環境（site-packages）を使うプロセスを止め、仮想環境ごと作り直す（RECORD が無いため GER は安全に隔離できない）。対象: {path}", True),
-        ("新しい仮想環境では安全版を指定してインストールする（pip install --require-hashes など）", True),
-        ("CL-SECRET を実施する（インストール時・import 時にコードが実行されている可能性がある）", True),
-        ("ZES で再スキャンし、この finding が消えたことを確かめる", True),
+        ("Stop the processes that use the virtual environment (site-packages) containing the compromised or vulnerable version, and recreate the whole virtual environment (there is no RECORD, so GER cannot quarantine it safely). Target: {path}", True),  # noqa: E501
+        ("In the new virtual environment, install a safe version explicitly (pip install --require-hashes, and so on)", True),
+        ("Carry out CL-SECRET (code may have run at install time or at import time)", True),
+        ("Rescan with ZES and confirm that this finding is gone", True),
     ],
     "CL-SECRET": [
-        ("この端末・作業ツリーから読めた認証情報（§14 の一覧と finding の path）を、提供元ですべて失効させる（GitHub PAT: Settings → Developer settings → Revoke、npm: npm token revoke、AWS: IAM でアクセスキーを無効化・削除、SSH 鍵: authorized_keys と GitHub の SSH keys から削除）", True),  # noqa: E501
-        ("新しい認証情報を、侵害されていない端末で発行する", True),
-        ("提供元の監査ログで、失効までの不正使用がなかったかを確かめる", True),
-        ("git 履歴に入っていれば、履歴の書き換えか失効だけで済ませるかを決めて記録する（GER は履歴を書き換えない）", False),
+        ("Revoke at each provider every credential that could be read from this machine or working tree (the list in §14 and the finding's path) (GitHub PAT: Settings → Developer settings → Revoke; npm: npm token revoke; AWS: deactivate and delete the access key in IAM; SSH keys: remove them from authorized_keys and from SSH keys on GitHub)", True),  # noqa: E501
+        ("Issue new credentials on a machine that is not compromised", True),
+        ("Check the provider's audit logs for unauthorized use before the revocation", True),
+        ("If the secret is in the git history, decide whether to rewrite the history or only revoke the secret, and record the decision (GER does not rewrite history)", False),  # noqa: E501
     ],
     "CL-IR": [
-        ("隔離・修復した時刻を記録し、この端末をネットワークから切り離すかどうかを判断する。対象: {path}", True),
-        ("CL-SECRET を実施する", True),
-        ("同じ campaign の他の痕跡を zes-scan.sh --full で確かめる", True),
-        ("再構築するかどうかを判断する（ルートキットや永続化の痕跡があれば再構築を勧める）。GER の修復はインシデントの終わりを意味しない", True),
+        ("Record the time of the quarantine and remediation, and decide whether to disconnect this machine from the network. Target: {path}", True),
+        ("Carry out CL-SECRET", True),
+        ("Check for other traces of the same campaign with zes-scan.sh --full", True),
+        ("Decide whether to rebuild the machine (rebuilding is recommended if there are traces of a rootkit or of persistence). Remediation by GER does not mean that the incident is over", True),  # noqa: E501
     ],
     "CL-LAUNCHD": [
-        ("launchctl bootout gui/$(id -u)/<Label> を実行する（LaunchDaemon なら sudo launchctl bootout system/<Label>）。GER は plist を隔離して次回の読み込みを止めただけで、今読み込まれているエージェントは動き続ける", True),  # noqa: E501
-        ("launchctl print gui/$(id -u)/<Label> が「見つからない」になることを確かめる", True),
-        ("ps -axo pid,command で ProgramArguments のプロセスが残っていないことを確かめ、残っていれば止める。プログラム本体も確かめる", True),
-        ("ログイン項目と構成プロファイルも確かめる", False),
+        ("Run launchctl bootout gui/$(id -u)/<Label> (for a LaunchDaemon: sudo launchctl bootout system/<Label>). GER only quarantined the plist to stop the next load; an agent that is loaded now keeps running", True),  # noqa: E501
+        ("Confirm that launchctl print gui/$(id -u)/<Label> reports that the service is not found", True),
+        ("Confirm with ps -axo pid,command that no process of ProgramArguments remains, and stop any that remain. Also check the program itself", True),
+        ("Also check login items and configuration profiles", False),
     ],
     "CL-SYSTEMD": [
-        ("systemctl --user stop <unit> と systemctl --user daemon-reload を実行する（GER はユニットファイルを隔離しただけ）", True),
-        ("*.wants/ のリンクとユニットが起動していたプログラムを確かめる", True),
+        ("Run systemctl --user stop <unit> and systemctl --user daemon-reload (GER only quarantined the unit file)", True),
+        ("Check the links in *.wants/ and the program that the unit started", True),
     ],
     "CL-CRON": [
-        ("crontab -l > ~/crontab.bak.$(date +%s) で退避する", True),
-        ("crontab -e で、通信や一時領域を実行する行（ZES の detail を参照）を消す（GER は crontab の spool を直接書き換えない）", True),
-        ("crontab -l で消えたことを確かめる", True),
+        ("Back up the crontab with crontab -l > ~/crontab.bak.$(date +%s)", True),
+        ("With crontab -e, delete the lines that make network connections or run files from temporary directories (see the ZES detail) (GER does not edit the crontab spool directly)", True),  # noqa: E501
+        ("Confirm with crontab -l that the lines are gone", True),
     ],
     "CL-EXT": [
-        ("ブラウザを終了してから修復したことを確かめる（起動中に隔離すると、ブラウザが「破損」と判断してストアから修復する場合がある）", True),
-        ("同期で再インストールされないよう、chrome://extensions とアカウントの同期設定から拡張機能を削除する", True),
-        ("拡張機能が読めた cookie のセッション（主要なサイト）を失効させる", True),
+        ("Confirm that the browser was closed before the remediation (if an extension is quarantined while the browser is running, the browser may treat it as corrupted and repair it from the store)", True),  # noqa: E501
+        ("Remove the extension in chrome://extensions and in the account's sync settings, so that sync does not reinstall it", True),
+        ("Revoke the sessions (for the main sites) whose cookies the extension could read", True),
     ],
     "CL-MCP": [
-        ("エージェント・IDE を再起動し、取り除いた MCP サーバーが読み込まれていないことを確かめる", True),
-        ("取り除いたサーバーが既に実行されていた可能性があれば CL-IR を実施する", True),
+        ("Restart the agent or IDE and confirm that the removed MCP server is not loaded", True),
+        ("If the removed server may already have run, carry out CL-IR", True),
     ],
     "CL-MCP-PIN": [
-        ("npx / uvx で実行時に最新版を取得する MCP サーバーの版を、承認者が決めて固定する（pkg@1.2.3）。版を足すことは「追加」なので GER は自動化しない。対象: {path}", True),
-        ("使わないサーバーなら disable_mcp_server で取り除く", False),
+        ("For an MCP server that npx / uvx fetches in its latest version at run time, the approver decides on a version and pins it (pkg@1.2.3). Adding a version is an addition, so GER does not automate it. Target: {path}", True),  # noqa: E501
+        ("If the server is not used, remove it with disable_mcp_server", False),
     ],
     "CL-SHELL": [
-        ("開いているシェルには効かない。シェルを開き直す（または unset LD_PRELOAD など、取り除いた設定を今のシェルからも外す）", True),
-        ("同じ行が他の rc ファイル（.zshrc / .profile / .bash_profile）に無いか確かめる", True),
+        ("This has no effect on shells that are already open. Open the shell again (or also undo the removed setting in the current shell, for example with unset LD_PRELOAD)", True),  # noqa: E501
+        ("Check that the same line is not in other rc files (.zshrc / .profile / .bash_profile)", True),
     ],
     "CL-LDSO": [
-        ("再起動する（ld.so.preload の行を取り除いても、既に動いているプロセスにはライブラリが読み込まれたまま）", True),
-        ("指していたライブラリを確かめて隔離する（Phase 2 で GER の preload_lib が対応予定）", True),
-        ("ルートキットがいる状態ではファイルシステムの見え方そのものが信用できない。再構築を検討する", True),
+        ("Reboot (after the line is removed from ld.so.preload, processes that are already running still have the library loaded)", True),
+        ("Check the library that the line pointed to and quarantine it (planned for preload_lib in GER Phase 2)", True),
+        ("While a rootkit is present, the view of the file system itself cannot be trusted. Consider rebuilding the machine", True),
     ],
     "CL-PHP": [
-        ("PHP を修正版に上げる（Dockerfile のベースイメージ・.tool-versions・apt / apk のパッケージ）。イメージを作り直してデプロイする", True),
-        ("php-fpm / Apache を再起動する（パッケージが修正済みでも、稼働中のワーカーが更新前のままの場合がある）", True),
-        ("ZES で再スキャンし、この finding が消えたことを確かめる", True),
+        ("Upgrade PHP to a fixed version (the base image in the Dockerfile, .tool-versions, apt / apk packages). Rebuild the image and deploy it", True),
+        ("Restart php-fpm / Apache (even when the package is fixed, running workers may still be the version before the update)", True),
+        ("Rescan with ZES and confirm that this finding is gone", True),
     ],
     "CL-PHP-RESTART": [
-        ("PHP（php-fpm / Apache）を再起動する。auto_prepend_file が正規の用途（APM など）だったかを確かめる", True),
+        ("Restart PHP (php-fpm / Apache). Check whether auto_prepend_file had a legitimate use (APM, and so on)", True),
     ],
     "CL-UPGRADE": [
-        ("ベンダーの勧告に従って、サーバー・ランタイム・パッケージを修正版に上げる（compose のタグを上げるだけでは移行が済まない場合がある）。対象: {path}", True),
-        ("更新後に再起動し、版を確かめる", True),
-        ("ZES で再スキャンし、この finding が消えたことを確かめる", True),
+        ("Upgrade the server, runtime and packages to a fixed version as the vendor's advisory says (raising the tag in compose may not complete the migration). Target: {path}", True),  # noqa: E501
+        ("Restart after the upgrade and check the version", True),
+        ("Rescan with ZES and confirm that this finding is gone", True),
     ],
     "CL-PWN": [
-        ("そのワークフローを無効にする（GitHub の Actions → 対象のワークフロー → Disable workflow、またはワークフローファイルを削除するコミットをデフォルトブランチに入れる）。対象: {path}", True),
-        ("actions/checkout から ref: ${{ github.event.pull_request.head.* }} を取り除くか、トリガーを pull_request に変える", True),
-        ("そのワークフローから参照できた secrets を、すべて CL-SECRET でローテーションする", True),
-        ("Actions の実行履歴で、外部の PR による実行がなかったかを確かめる", True),
+        ("Disable the workflow (on GitHub: Actions → the workflow → Disable workflow, or commit the deletion of the workflow file to the default branch). Target: {path}", True),  # noqa: E501
+        ("Remove ref: ${{ github.event.pull_request.head.* }} from actions/checkout, or change the trigger to pull_request", True),
+        ("Rotate every secret that the workflow could reference, with CL-SECRET", True),
+        ("Check the Actions run history for runs triggered by pull requests from outside", True),
     ],
     "CL-PIN": [
-        ("対象のアクション・イメージのリポジトリで、タグが指すコミット SHA / ダイジェストを信頼できる端末で確かめる（git ls-remote / docker buildx imagetools inspect）。対象: {path}", True),
-        ("その SHA がフォークではなく本体のリポジトリの履歴にあり、侵害の時期より前のものであることを確かめる", True),
-        ("SHA / ダイジェストで固定する（Phase 2 で GER の pin_action / pin_digest が承認者 2 名で対応予定）。侵害が報告されたアクションは固定せず、代わりのものを選ぶ", True),
+        ("On a trusted machine, check in the repository of the action or image the commit SHA or digest that the tag points to (git ls-remote / docker buildx imagetools inspect). Target: {path}", True),  # noqa: E501
+        ("Confirm that the SHA is in the history of the upstream repository, not of a fork, and that it predates the compromise", True),
+        ("Pin by SHA or digest (planned for pin_action / pin_digest with 2 approvers in GER Phase 2). Do not pin an action that was reported as compromised; choose a replacement instead", True),  # noqa: E501
     ],
     "CL-SKILL": [
-        ("スキルの作者に報告し、契約（skill.contract.json）を直してもらう。対象: {path}", True),
-        ("直るまでそのスキルを使わない（必要なら quarantine skill_dir で隔離する）", True),
+        ("Report to the author of the skill and have the contract (skill.contract.json) fixed. Target: {path}", True),
+        ("Do not use the skill until it is fixed (quarantine it with quarantine skill_dir if needed)", True),
     ],
     "CL-ENV": [
-        ("PYTHONNOUSERSITE=1 / PIP_REQUIRE_VIRTUALENV=true / npm の ignore-scripts=true を、利用者のシェルの rc に設定する（どの rc に書くかは環境による）", True),
+        ("Set PYTHONNOUSERSITE=1 / PIP_REQUIRE_VIRTUALENV=true / npm's ignore-scripts=true in the user's shell rc (which rc file depends on the environment)", True),  # noqa: E501
     ],
     "CL-REVIEW": [
-        ("ZES の detail に従って手で直す（コードの意味を変える修正・正しい値が人にしか分からない修正は GER が自動化しない）。対象: {path}", True),
-        ("ZES で再スキャンし、この finding が消えたことを確かめる", True),
+        ("Fix it by hand as the ZES detail says (GER does not automate fixes that change the meaning of code, or fixes whose correct value only a person knows). Target: {path}", True),  # noqa: E501
+        ("Rescan with ZES and confirm that this finding is gone", True),
     ],
 }
 TEMPLATES = frozenset(_T)
+PATH_NONE = "(no path)"
+
+
+def _steps(table: dict, template: str, path: str | None, pkg: str | None, none: str) -> list[dict]:
+    return [{"id": f"s{i}", "text": t.replace("{path}", path or none).replace("{pkg}", pkg or "<name>"), "blocking": b}
+            for i, (t, b) in enumerate(table[template], 1)]
 
 
 def checklist(template: str, path: str | None, pkg: str | None = None) -> dict:
-    """{path} は finding の path、{pkg} は findings 1.1 の subject.package（無ければ <name>）に置き換える。"""
-    steps = [{"id": f"s{i}", "text": t.replace("{path}", path or "（path なし）").replace("{pkg}", pkg or "<name>"), "blocking": b}
-             for i, (t, b) in enumerate(_T[template], 1)]
-    return {"template": template, "steps": steps}
+    """{path} becomes the finding's path, {pkg} the findings 1.1 subject.package (<name> when there is none)."""
+    return {"template": template, "steps": _steps(_T, template, path, pkg, PATH_NONE)}
 
 
 def pkg_of(f: dict) -> str | None:
@@ -138,15 +145,22 @@ def pkg_of(f: dict) -> str | None:
 
 
 def template_ok(cl: dict, path: str | None, pkg: str | None = None) -> bool:
-    """雛形の手順がすべて（同じ id・同じ文言で）含まれていること。手順を足すのは構わない。"""
+    """Every step of the template is included (same id, same text, same blocking). Adding steps is allowed.
+
+    The text may be the current English one or, for plans made by an older ZET, the Japanese one
+    (legacy_templates). One checklist uses one language for all the steps of its template.
+    """
     if cl.get("template") not in _T:
         return False
-    want = checklist(cl["template"], path, pkg)["steps"]
     have = {(s.get("id"), s.get("text"), s.get("blocking")) for s in cl.get("steps", [])}
-    return all((s["id"], s["text"], s["blocking"]) in have for s in want)
+    for table, none in ((_T, PATH_NONE), (TEMPLATES_JA, PATH_NONE_JA)):
+        want = _steps(table, cl["template"], path, pkg, none)
+        if all((s["id"], s["text"], s["blocking"]) in have for s in want):
+            return True
+    return False
 
 
-# --- 字句上の規則（GER の ger/hazards.py・ger/actions/quarantine.py と同じ） -------------------------
+# --- Lexical rules (the same as GER's ger/hazards.py and ger/actions/quarantine.py) -----------------------
 ROOT_PREFIXES = ("/etc/", "/usr/", "/var/", "/opt/", "/bin/", "/sbin/", "/lib/", "/lib32/", "/lib64/", "/libx32/",
                  "/boot/", "/System/", "/Library/", "/private/etc/", "/private/var/")
 USER_TMP_PREFIXES = ("/var/folders/", "/private/var/folders/", "/var/tmp/")
@@ -159,7 +173,7 @@ def root_required(path: str | None) -> bool:
 LOCKFILES = {"package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock"}
 PKG_MANIFESTS = LOCKFILES | {"Gemfile.lock", "Cargo.lock", "composer.lock", "go.sum", "poetry.lock", "Pipfile.lock",
                              "uv.lock", "pyproject.toml", "Pipfile", "Gemfile", "Cargo.toml", "go.mod", "composer.json"}
-# ロックファイル（依存の版を固定するファイル）。この finding は node_modules などの実体を隔離しても消えない
+# Lockfiles (files that pin dependency versions). Quarantining the installed copy (node_modules and so on) does not clear such a finding
 LOCKFILE_NAMES = LOCKFILES | {"Gemfile.lock", "Cargo.lock", "composer.lock", "go.sum", "poetry.lock", "Pipfile.lock", "uv.lock",
                               "deno.lock"}
 MCP_JSON = {".mcp.json", "mcp.json", "mcp_config.json", ".claude.json", "claude_desktop_config.json"}
@@ -174,49 +188,50 @@ MALWARE_MODULES = {"§2", "§15", "§18", "§20", "§24", "§30", "§31", "§40"
 
 
 def lexical_relation(relation: str, target: str | None, fp: str | None, related: list | None = None) -> str | None:
-    """I-4: target と finding の path の関係（字句上の条件）。問題があれば理由。"""
+    """I-4: the relation between target and the finding's path (lexical conditions). Returns the reason when there is a problem."""
     if relation not in RELATIONS:
-        return f"relation {relation} は未知です"
+        return f"relation {relation} is unknown"
     if relation == "none":
-        return None if target is None else "relation none は target が null のときだけです"
+        return None if target is None else "relation none is only for a target of null"
     if target is None:
-        return "target が null の action の relation は none にすること"
+        return "the relation of an action whose target is null must be none"
     if relation not in PHASE1_RELATIONS:
-        # Phase 2 の関係は ZES 1.1 の related にあるときだけ（GER Phase 1 は未対応で拒否する）
+        # Phase 2 relations only when they are in the related list of ZES findings 1.1 (GER Phase 1 does not support them and rejects them)
         ok = any(r.get("relation") == relation and r.get("path") == target for r in related or [])
-        return None if ok else f"relation {relation} は finding の related にある対象だけです"
+        return None if ok else f"relation {relation} is only for a target in the finding's related list"
     if fp is None:
-        return "path が null の finding には checklist（target null）以外の action を設定できません"
+        return "a finding whose path is null can only have a checklist action (target null)"
     if relation == "self":
-        return None if target == fp else "relation self では action.target を finding の path と一致させること"
+        return None if target == fp else "with relation self, action.target must equal the finding's path"
     if related and any(r.get("relation") == relation and r.get("path") == target for r in related):
         return None
     if relation == "npm_pkg_dir":
         par = posixpath.dirname(target)
         ok = fp == target + "/package.json" and (posixpath.basename(par) == "node_modules" or (
             posixpath.basename(par).startswith("@") and posixpath.basename(posixpath.dirname(par)) == "node_modules"))
-        return None if ok else "npm_pkg_dir: target は node_modules/<name> で、finding の path がその package.json であること"
+        return None if ok else "npm_pkg_dir: target must be node_modules/<name> and the finding's path must be its package.json"
     if relation == "npm_installed":
         base = posixpath.dirname(fp) + "/node_modules/"
         ok = posixpath.basename(fp) in LOCKFILES and target.startswith(base) and _NPM_REST.fullmatch(target[len(base):])
-        return None if ok else "npm_installed: finding がロックファイルで、target がその隣の node_modules/<name> であること"
+        return None if ok else "npm_installed: the finding must be a lockfile and target must be node_modules/<name> next to it"
     if relation == "pypi_record":
         ok = target == fp and posixpath.basename(target).endswith(".dist-info")
-        return None if ok else "pypi_record: target は finding の path の *.dist-info であること"
+        return None if ok else "pypi_record: target must be the *.dist-info that is the finding's path"
     if relation == "ext_dir":
         m = _EXT.match(fp)
-        return None if m and m.group(1) == target else "ext_dir: finding の path が …/Extensions/<id>[/<ver>]/manifest.json で、target が …/Extensions/<id> であること"
+        return None if m and m.group(1) == target else (
+            "ext_dir: the finding's path must be …/Extensions/<id>[/<ver>]/manifest.json and target must be …/Extensions/<id>")
     if relation == "skill_dir":
         ok = target == fp or (posixpath.basename(fp) == "skill.contract.json" and posixpath.dirname(fp) == target)
-        return None if ok else "skill_dir: target は finding の path のスキルのディレクトリであること"
-    return "未知の relation"
+        return None if ok else "skill_dir: target must be the directory of the skill at the finding's path"
+    return "unknown relation"
 
 
-# --- I-13: findings 1.1 の kind ごとに許す操作 ----------------------------------------------------
+# --- I-13: operations allowed for each findings 1.1 kind ---------------------------------------------
 KIND_ACTIONS = {
     "pkg.compromised": {"quarantine", "checklist"},
     "pkg.vulnerable": {"checklist"},
-    "pkg.lockfile_compromised": {"checklist"},  # §9.6: 実体の隔離は node_modules/<name>/package.json の finding で行う
+    "pkg.lockfile_compromised": {"checklist"},  # §9.6: the installed copy is quarantined through the node_modules/<name>/package.json finding
     "mcp.dangerous_command": {"disable_mcp_server", "edit_json", "edit_toml", "checklist"},
     "mcp.unpinned": {"disable_mcp_server", "checklist"},
     "gha.unpinned": {"checklist"},
@@ -227,9 +242,10 @@ KIND_ACTIONS = {
 
 
 def is_lockfile_finding(f: dict) -> bool:
-    """I-13（§9.6）: ロックファイルの finding（findings 1.1 の kind pkg.lockfile_compromised、または §15 のロックファイル）。
-    ZES はロックファイルの中身を見て報告するため、インストール済みの実体（node_modules/<name>）を隔離しても消えない。
-    ロックファイルを直すのは作業者（再生成・安全版への固定）で、GER は書き換えない。自動修復とは数えず checklist だけにする。"""
+    """I-13 (§9.6): a lockfile finding (findings 1.1 kind pkg.lockfile_compromised, or a §15 lockfile).
+    ZES reports it from the contents of the lockfile, so quarantining the installed copy (node_modules/<name>) does not
+    clear it. The operator fixes the lockfile (regeneration, pinning a safe version); GER does not rewrite it. It is not
+    counted as an automatic remediation and gets a checklist only."""
     return f.get("kind") == "pkg.lockfile_compromised" or (f["module"] == "§15" and _b(f["path"]) in LOCKFILE_NAMES)
 
 
@@ -238,7 +254,7 @@ def lockfile_template(f: dict) -> str:
     return "CL-LOCKFILE" if _b(f["path"]) in LOCKFILES or s.get("ecosystem") == "npm" else "CL-PKG"
 
 
-# --- 提案 ---------------------------------------------------------------------------------------
+# --- Suggestions --------------------------------------------------------------------------------
 def _b(p):
     return posixpath.basename(p) if p else ""
 
@@ -264,7 +280,7 @@ def _ir(f):
 
 
 def classify(f: dict) -> tuple[list[dict], str | None]:
-    """(提案の一覧 [{label, action, note?}], 注記)。最初の auto を既定の候補にする。"""
+    """(list of suggestions [{label, action, note?}], note). The first auto is the default candidate."""
     p, m, lv, camp = f["path"], f["module"], f["level"], f.get("campaign")
     b = _b(p)
     kind = f.get("kind") or ""
@@ -287,11 +303,12 @@ def classify(f: dict) -> tuple[list[dict], str | None]:
             autos.append(_q(f, fu=("CL-IR", "CL-SECRET")))
         cl = "CL-IR"
     elif m == "§15" and is_lockfile_finding(f):
-        # §9.6: related npm_installed があっても auto にしない。実体の隔離は node_modules/<name>/package.json の
-        # finding（pkg.compromised）の quarantine npm_pkg_dir が行う（ZES はインストール済みの版が侵害版なら別に報告する）
+        # §9.6: no auto even with related npm_installed. The installed copy is quarantined by quarantine npm_pkg_dir on the
+        # node_modules/<name>/package.json finding (pkg.compromised); ZES reports that one separately when the installed version is compromised
         cl = lockfile_template(f)
         if any(r.get("relation") == "npm_installed" for r in f.get("related") or []):
-            note = "node_modules の実体を隔離してもロックファイルの finding は再生成まで残る（作業者が checklist で完了にする）"
+            note = ("quarantining the copy in node_modules does not clear the lockfile finding until the lockfile is regenerated "
+                    "(the operator completes it with the checklist)")
     elif m == "§15":
         parts = p.split("/")
         if b == "package.json" and "node_modules" in parts[:-1]:
@@ -300,7 +317,7 @@ def classify(f: dict) -> tuple[list[dict], str | None]:
         elif b.endswith(".dist-info"):
             if lv == "CRITICAL" or kind == "pkg.compromised":
                 autos.append(_q(f, "pypi_record", p, ("CL-PKG", "CL-SECRET")))
-                note = "RECORD が無ければ GER は隔離を拒否する（Q-6）。そのときは checklist CL-VENV"
+                note = "without RECORD, GER refuses the quarantine (Q-6); use checklist CL-VENV in that case"
             cl = "CL-VENV" if lv == "CRITICAL" else "CL-PKG"
         elif b.endswith(".egg-info"):
             cl = "CL-VENV"
@@ -385,7 +402,7 @@ def classify(f: dict) -> tuple[list[dict], str | None]:
 
 
 def candidate_targets(f: dict) -> list[tuple[str, str]]:
-    """この finding が関係でつながりうる (relation, target)。他の finding の自動修復に含まれるかの判定に使う。"""
+    """The (relation, target) pairs this finding can be linked by. Used to tell whether another finding's automatic remediation covers it."""
     p = f["path"]
     if not p:
         return []
@@ -405,17 +422,18 @@ def group_id(type_: str, target: str) -> str:
 
 
 def suggest_all(findings: list[dict]) -> dict[str, list[dict]]:
-    """finding_id → 提案。同じ対象への自動修復は group にまとめ、他の自動修復の対象に含まれる finding にも同じ操作を提案する。"""
+    """finding_id → suggestions. Automatic remediations of the same target are put in one group, and a finding covered by
+    another finding's automatic remediation gets the same operation suggested."""
     sug = {x["id"]: classify(x)[0] for x in findings}
     autos: dict[tuple[str, str], list[str]] = {}
     for x in findings:
         for s in sug[x["id"]]:
             if s["label"] == "auto":
                 autos.setdefault((s["action"]["type"], s["action"]["target"]), []).append(x["id"])
-    # 他の finding の自動修復の対象に含まれる finding（同じファイル・同じスキル・同じ拡張機能）
+    # Findings covered by another finding's automatic remediation (same file, same skill, same extension)
     by_target = {}
     for (t, tgt), fids in autos.items():
-        if t == "quarantine":  # 隔離はファイル・ツリーごと移すので、同じ対象の他の finding もまとめて消える（編集は消えない）
+        if t == "quarantine":  # quarantine moves the whole file or tree, so the other findings on it go away too (an edit does not do that)
             by_target.setdefault(tgt, []).append((t, fids))
     for x in findings:
         if any(s["label"] == "auto" for s in sug[x["id"]]) or is_lockfile_finding(x):
@@ -428,7 +446,7 @@ def suggest_all(findings: list[dict]) -> dict[str, list[dict]]:
                 if src["action"].get("followup"):
                     a["followup"] = [checklist(c["template"], x["path"], pkg_of(x)) for c in src["action"]["followup"]]
                 sug[x["id"]].insert(0, {"label": "auto", "action": a,
-                                        "note": "同じ対象を他の finding の自動修復が扱うため、同じ group にまとめる"})
+                                        "note": "another finding's automatic remediation handles the same target, so both are in the same group"})
                 fids.append(x["id"])
                 break
             else:
@@ -445,9 +463,9 @@ def suggest_all(findings: list[dict]) -> dict[str, list[dict]]:
 
 
 def required_followups(f: dict, action: dict, suggestions: list[dict]) -> set[str]:
-    """I-13: 自動修復の action に必ず付ける後続作業の template。提案と同じ操作なら提案の followup、
-    そうでなければ、マルウェアの痕跡（campaign あり・該当モジュール）へのファイルの変更には CL-IR。"""
-    if action["type"] in ("checklist", "chmod"):  # chmod は権限を絞るだけ（§11 の権限の finding）。後続作業は求めない
+    """I-13: the follow-up templates that an automatic remediation action must carry. The suggestion's followup when the
+    operation is the suggested one; otherwise CL-IR for a file change on a malware trace (with a campaign, or in a malware module)."""
+    if action["type"] in ("checklist", "chmod"):  # chmod only narrows permissions (§11 permission findings). No follow-up work is required
         return set()
     for s in suggestions:
         a = s["action"]

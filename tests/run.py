@@ -1,4 +1,4 @@
-"""python3 -I tests/run.py でテストを実行する（-I のためリポジトリのルートを明示的に追加）。"""
+"""Run the tests with python3 -I tests/run.py (because of -I the repository root is added explicitly)."""
 import os
 import sys
 import unittest

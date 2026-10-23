@@ -40,6 +40,8 @@ ZET does not look at the file system. With ZES findings 1.0 it works from `modul
 | Server / runtime CVEs (§3 §5 §6 §16 §37 §41), PHP (§4), pwn requests (§21 §38), unpinned actions and images (§22 §28), crontab and env vars (`path: null`), secrets (§8 §45 §47) | — | — | CL-UPGRADE / CL-PHP / CL-PWN / CL-PIN / CL-CRON / CL-ENV / CL-SECRET |
 
 An INFO finding on a file that another finding's quarantine will move (for example the §10 INFO on a LaunchAgent that §30 quarantines) is not auto-deferred; it is offered the same grouped quarantine, because the re-scan will not show it either. Lock files are never edited and secrets are never rotated automatically: those stay checklists.
+
+Checklist step texts are English. Drafts and plans made by ZET before the English switch carry the earlier Japanese step texts; I-13 still accepts them, as long as every step of a template matches one language word for word (`zet/legacy_templates.py`). GER checks only the shape of the steps (`id`, `text`, `blocking`), not their wording.
 - **Zero dependencies**: Python 3.11+ standard library only. Launched with `python3 -I -S`, so neither environment variables nor any `.pth` file in site-packages can run code inside it
 
 ## Usage
@@ -47,14 +49,14 @@ An INFO finding on a file that another finding's quarantine will move (for examp
 ```bash
 bin/zet validate triage-input.json --operator alice
 bin/zet draft    triage-input.json --operator alice -o plan.draft.json
-# plan.draft.json の decision / owner / approved_by などを記入（constraints.suggested_actions から action を選ぶ）
-ger preview plan.draft.json --operator alice -o plan.previewed.json --report preview.json   # GER: params のハッシュを埋める
+# fill in decision / owner / approved_by and so on in plan.draft.json (pick each action from constraints.suggested_actions)
+ger preview plan.draft.json --operator alice -o plan.previewed.json --report preview.json   # GER: fills in the hashes in params
 bin/zet check    triage-input.json plan.previewed.json --operator alice
-bin/zet finalize triage-input.json plan.draft.json --operator alice -o remediation-plan.json
+bin/zet finalize triage-input.json plan.previewed.json --operator alice -o remediation-plan.json
 bin/zet verify-log
 ```
 
-(The comment line means: fill in `decision` / `owner` / `approved_by` etc. in plan.draft.json, picking each `action` from `constraints.suggested_actions`; then let `ger preview` fill in the exact hashes, ops and `expected_after_sha256`, and finalize that file.)
+`ger preview` fills in the exact hashes, ops and `expected_after_sha256`; finalize the file it writes.
 
 To suggest file-changing actions, the triage input needs the approved scan scope: `policy.scope = {"roots": [<ZES --root>], "home": <ZES_HOME>}` (or `scan_roots` in findings 1.1). ZET copies it into the plan as `scope`, and every target must lie under it.
 
@@ -108,10 +110,8 @@ At runtime, the schema files themselves are validated with a subset validator wr
 ## Tests
 
 ```bash
-tests/run-tests.sh   # 単体テスト＋ strace による execve 監視（bash / python3 以外を起動しないこと）
+tests/run-tests.sh   # unit tests + execve monitoring with strace (nothing other than bash / python3 may be launched)
 ```
-
-This runs the unit tests plus execve monitoring with strace (nothing other than bash / python3 may be launched).
 
 If `jsonschema` is installed, the validator-agreement tests also run (a development-only dependency; SKIP if absent).
 

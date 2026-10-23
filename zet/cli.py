@@ -1,12 +1,12 @@
-"""zet コマンド。
+"""The zet command.
 
   zet validate <triage-input.json> --operator NAME
   zet draft    <triage-input.json> --operator NAME [--plan-id UUID] [-o OUT]
   zet check    <triage-input.json> <plan.json> --operator NAME
   zet finalize <triage-input.json> <plan.json> --operator NAME -o OUT
-  zet verify-log [LOG]          監査ログのハッシュチェーンを検証する（読むだけ。監査ログには記録しない）
+  zet verify-log [LOG]          verify the hash chain of the audit log (read only; not recorded in the audit log)
 
-終了コード: 0=合格 / 3=契約違反（verify-log はチェーンの破損） / 64=引数・環境エラー / 70=内部エラー
+Exit codes: 0 = passed / 3 = contract violation (for verify-log: broken chain) / 64 = argument or environment error / 70 = internal error
 """
 from __future__ import annotations
 
@@ -28,24 +28,24 @@ _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 
 
 class _Parser(argparse.ArgumentParser):
-    def error(self, message: str) -> None:  # 終了コードを 64 に統一
+    def error(self, message: str) -> None:  # always exit with 64
         self.print_usage(sys.stderr)
         _err(f"zet: {message}")
         sys.exit(EXIT_USAGE)
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = _Parser(prog="zet", description="ZET — Zero-Exec Triage（判断層）")
+    p = _Parser(prog="zet", description="ZET — Zero-Exec Triage (decision layer)")
     sub = p.add_subparsers(dest="command", required=True)
-    s = sub.add_parser("verify-log", help="監査ログのハッシュチェーンを検証する")
-    s.add_argument("log", nargs="?", help="検証するログ（既定 $ZET_LOG_DIR/zet-audit.jsonl）")
+    s = sub.add_parser("verify-log", help="verify the hash chain of the audit log")
+    s.add_argument("log", nargs="?", help="the log to verify (default: $ZET_LOG_DIR/zet-audit.jsonl)")
     for name, plan in (("validate", False), ("draft", False), ("check", True), ("finalize", True)):
         s = sub.add_parser(name)
         s.add_argument("input")
         if plan:
             s.add_argument("plan")
-        s.add_argument("--operator", required=True, help="実行者（監査ログに記録。自己申告ではなく明示指定）")
-        s.add_argument("--now", help="現在時刻の上書き（RFC 3339 UTC。テスト専用: ZET_ALLOW_NOW_OVERRIDE=1 が必要）")
+        s.add_argument("--operator", required=True, help="who runs the command (recorded in the audit log; must be given explicitly)")
+        s.add_argument("--now", help="override the current time (RFC 3339 UTC; for tests only: needs ZET_ALLOW_NOW_OVERRIDE=1)")
         if name == "draft":
             s.add_argument("--plan-id")
             s.add_argument("-o", "--output")
@@ -55,7 +55,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _err(text: str) -> None:
-    """標準エラー出力へ。入力由来の文字列（キー名・パス・例外の文言）を含みうるため制御文字をエスケープする。"""
+    """To standard error. Control characters are escaped, because the text can contain strings from the input (keys, paths, exception messages)."""
     print(safe_text(text), file=sys.stderr)
 
 
@@ -70,56 +70,56 @@ def _verify_log(path: str | None) -> int:
     try:
         n, problems = audit.scan_chain(p)
     except OSError as e:
-        _err(f"zet verify-log: 監査ログを読めません（{e}）")
+        _err(f"zet verify-log: cannot read the audit log ({e})")
         return EXIT_USAGE
     if not p.exists():
-        _err(f"zet verify-log: 監査ログがありません: {p}")
+        _err(f"zet verify-log: no audit log: {p}")
         return EXIT_USAGE
     if problems:
-        _err(f"zet verify-log: ハッシュチェーンが壊れています（{len(problems)} 件、全 {n} 行）: {p}")
+        _err(f"zet verify-log: the hash chain is broken (problems: {len(problems)}, lines: {n}): {p}")
         for x in problems:
             _err(f"  {x}")
         return EXIT_CONTRACT
-    _err(f"zet verify-log: OK（{n} 件、ハッシュチェーンは健全）: {p}")
+    _err(f"zet verify-log: OK (records: {n}, the hash chain is intact): {p}")
     return EXIT_OK
 
 
 def _output_problem(out: str, sources: list[str]) -> str | None:
-    """-o の事前検証。処理（と監査ログの記録）の前に、書き出せない出力先を弾く。"""
+    """Pre-check of -o. Rejects an output that cannot be written before any processing (and before the audit record)."""
     if not out:
-        return "-o が空です"
+        return "-o is empty"
     try:
         if os.path.isdir(out):
-            return f"-o がディレクトリです: {out}"
-        if out.endswith(("/", os.sep)):  # 存在しないディレクトリ・ファイルの後ろの / は書き出し時まで失敗しない
-            return f"-o の末尾に / は付けられません: {out}"
+            return f"-o is a directory: {out}"
+        if out.endswith(("/", os.sep)):  # a trailing / after a missing directory or after a file would only fail when writing
+            return f"-o cannot end with /: {out}"
         if os.path.exists(out) and not os.path.isfile(out):
-            return f"-o が通常ファイルではありません: {out}"  # /dev/full など。os.replace で置き換えない
-        # 親は与えられたパスのまま調べる（abspath は nd/../x の nd が無いことを隠す）
+            return f"-o is not a regular file: {out}"  # /dev/full and so on. Never replaced with os.replace
+        # check the parent as given (abspath would hide that nd is missing in nd/../x)
         parent = os.path.dirname(out) or "."
         if not os.path.isdir(parent):
-            return f"-o のディレクトリがありません: {parent}"
+            return f"the directory of -o does not exist: {parent}"
         if not os.access(parent, os.W_OK | os.X_OK):
-            return f"-o のディレクトリに書き込めません: {parent}"
+            return f"cannot write to the directory of -o: {parent}"
         for src in sources:
             if os.path.realpath(out) == os.path.realpath(src) or (
                     os.path.exists(out) and os.path.exists(src) and os.path.samefile(out, src)):
-                return f"-o が入力ファイルと同じです: {out}"
-        # 監査ログ（とそのディレクトリ）を出力で置き換えるとハッシュチェーンが壊れる
+                return f"-o is the same as an input file: {out}"
+        # replacing the audit log (or its directory) with the output would break the hash chain
         log, logd = os.path.realpath(audit.log_path()), os.path.realpath(audit.log_dir())
         if os.path.realpath(out) == log or (
                 os.path.exists(out) and os.path.exists(log) and os.path.samefile(out, log)):
-            return f"-o に監査ログは指定できません: {out}"
+            return f"-o cannot be the audit log: {out}"
         for p in (os.path.realpath(out), os.path.realpath(parent)):
             if p == logd or os.path.commonpath([p, logd]) == logd:
-                return f"-o に監査ログのディレクトリ内は指定できません: {out}"
-    except (OSError, ValueError) as e:  # ValueError: パスに NUL を含む
-        return f"-o を検査できません（{e}）"
+                return f"-o cannot be inside the audit log directory: {out}"
+    except (OSError, ValueError) as e:  # ValueError: the path contains NUL
+        return f"cannot check -o ({e})"
     return None
 
 
 def _discard_stdout() -> None:
-    """書き出せなかった標準出力のバッファを終了時に再送しない（終了時の例外と終了コード 120 を防ぐ）。"""
+    """Do not flush a standard output buffer that could not be written again at exit (avoids an exception at exit and exit code 120)."""
     try:
         fd = os.open(os.devnull, os.O_WRONLY)
         os.dup2(fd, sys.stdout.fileno())
@@ -129,18 +129,18 @@ def _discard_stdout() -> None:
 
 
 def _harden_streams() -> None:
-    """UTF-8 でないロケールでも人向けのメッセージで UnicodeEncodeError を起こさない（符号化方式は変えない）。"""
+    """No UnicodeEncodeError for human-readable messages in a non-UTF-8 locale (the encoding is not changed)."""
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(errors="backslashreplace")
-        except (AttributeError, ValueError, OSError):  # StringIO などの差し替え先
+        except (AttributeError, ValueError, OSError):  # replacements such as StringIO
             pass
 
 
 def _write_stdout(text: str) -> None:
-    """機械可読な JSON はロケールにかかわらず UTF-8 のバイト列で書く（ensure_ascii=False のため）。"""
+    """Machine-readable JSON is written as UTF-8 bytes whatever the locale (because of ensure_ascii=False)."""
     buf = getattr(sys.stdout, "buffer", None)
-    if buf is None:  # テストなどで文字列ストリームに差し替えられている
+    if buf is None:  # replaced with a text stream, for example in tests
         sys.stdout.write(text)
         sys.stdout.flush()
         return
@@ -155,25 +155,25 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "verify-log":
         return _verify_log(args.log)
     if not _PERSON.fullmatch(args.operator):
-        _err("zet: --operator の形式が不正です")
+        _err("zet: invalid --operator")
         return EXIT_USAGE
     if getattr(args, "plan_id", None) and not _UUID.fullmatch(args.plan_id):
-        _err("zet: --plan-id は UUID（小文字）で指定してください")
+        _err("zet: --plan-id must be a UUID (lowercase)")
         return EXIT_USAGE
     if args.now is not None and os.environ.get("ZET_ALLOW_NOW_OVERRIDE") != "1":
-        # --now は I-9 の「decided_at <= 現在時刻」の上限を動かせるため、本番では受け付けない
-        _err("zet: --now はテスト専用です（ZET_ALLOW_NOW_OVERRIDE=1 のときだけ使えます）")
+        # --now can move the upper bound of I-9 (decided_at <= current time), so it is not accepted in production
+        _err("zet: --now is for tests only (it works only with ZET_ALLOW_NOW_OVERRIDE=1)")
         return EXIT_USAGE
     try:
         now = now_utc(args.now)
-        now + dt.timedelta(days=triage.MAX_DAYS)  # 期限の計算が範囲外になる時刻は受け付けない
+        now + dt.timedelta(days=triage.MAX_DAYS)  # reject a time for which the deadline calculation would be out of range
     except (ValueError, OverflowError):
-        _err("zet: --now は YYYY-MM-DDTHH:MM:SSZ 形式で指定してください")
+        _err("zet: --now must have the form YYYY-MM-DDTHH:MM:SSZ")
         return EXIT_USAGE
     try:
         audit.ensure_writable()
     except OSError as e:
-        _err(f"zet: {e}（記録できないため実行しません）")
+        _err(f"zet: {e} (not run, because it cannot be recorded)")
         return EXIT_USAGE
     out = getattr(args, "output", None)
     if out is not None:
@@ -208,24 +208,24 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as e:
         _err(f"zet: {e}")
         code = EXIT_USAGE
-    except Exception as e:  # 想定外は fail-closed（出力しない）
-        # 例外の repr は入力文書全体を含みうるため、型名と短いメッセージだけを出す
-        _err(f"zet: 内部エラー: {type(e).__name__}: {str(e)[:200]}")
+    except Exception as e:  # anything unexpected fails closed (no output)
+        # the repr of an exception can contain the whole input document, so only the type name and a short message are shown
+        _err(f"zet: internal error: {type(e).__name__}: {str(e)[:200]}")
         code = EXIT_INTERNAL
 
     if code == EXIT_OK and violations:
         code = EXIT_CONTRACT
-        _err(f"zet {args.command}: 契約違反 {len(violations)} 件")
+        _err(f"zet {args.command}: contract violations: {len(violations)}")
         _report(violations)
         output_obj = None
-    # 出力は先に文字列にしてから書き出し、書き出せた場合だけ監査ログに ok と output_hash を残す
+    # the output is turned into a string first; only when it was written does the audit log get ok and output_hash
     text = out_hash = None
     if code == EXIT_OK and output_obj is not None:
         try:
             text = dumps_pretty(output_obj)
             out_hash = sha256(canonical(output_obj))
         except (RecursionError, ValueError) as e:
-            _err(f"zet: 出力を JSON にできません（{type(e).__name__}。入れ子が深すぎる可能性があります）")
+            _err(f"zet: cannot turn the output into JSON ({type(e).__name__}; the nesting may be too deep)")
             code = EXIT_INTERNAL
     written = False
     if code == EXIT_OK and text is not None:
@@ -236,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
                 _write_stdout(text)
             written = True
         except OSError as e:
-            _err(f"zet: 出力を書き出せません（{e}）")
+            _err(f"zet: cannot write the output ({e})")
             if not out:
                 _discard_stdout()
             code = EXIT_USAGE
@@ -253,14 +253,14 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as e:
         if written and out:
             try:
-                os.unlink(out)  # 記録の無い出力を残さない
+                os.unlink(out)  # leave no output without a record
             except OSError:
                 pass
-            _err(f"zet: 監査ログに記録できません（{e}）。出力を削除しました")
+            _err(f"zet: cannot record in the audit log ({e}). The output was deleted")
         elif written:
-            _err(f"zet: 監査ログに記録できません（{e}）。標準出力の内容は使わないでください")
+            _err(f"zet: cannot record in the audit log ({e}). Do not use what was written to standard output")
         else:
-            _err(f"zet: 監査ログに記録できません（{e}）")
+            _err(f"zet: cannot record in the audit log ({e})")
         return EXIT_USAGE
     if code == EXIT_OK:
         _err(f"zet {args.command}: OK")
