@@ -71,7 +71,7 @@ At runtime, the schema files themselves are validated with a subset validator wr
 
 ## Audit log
 
-`$ZET_LOG_DIR/zet-audit.jsonl` (default `~/.local/state/zet/`). One record per line (command / operator / input_hash / output_hash / started_at / finished_at / result / violations / prev_hash; runs that used `--now` also get `now_override: true`). `result: ok` and `output_hash` are recorded only when the output (`-o` or standard output) was written successfully; otherwise `result: error`. Rejections are logged too, and tampering can be detected through the `prev_hash` hash chain. If the log cannot be written, or if the log directory is owned by someone other than the running user or is writable by group or others, ZET does nothing (exit code `64`).
+`$ZET_LOG_DIR/zet-audit.jsonl` (default `$XDG_STATE_HOME/zet/`, or `~/.local/state/zet/` when `XDG_STATE_HOME` is unset). One record per line (command / operator / input_hash / output_hash / started_at / finished_at / result / violations / prev_hash; runs that used `--now` also get `now_override: true`). `result: ok` and `output_hash` are recorded only when the output (`-o` or standard output) was written successfully; otherwise `result: error`. Rejections are logged too, and tampering can be detected through the `prev_hash` hash chain. If the log cannot be written, or if the log directory is owned by someone other than the running user or is writable by group or others, ZET does nothing (exit code `64`).
 
 ## Tests
 
