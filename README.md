@@ -21,7 +21,7 @@ English | [日本語](README.ja.md)
 
 ## What gets suggested
 
-ZET does not look at the file system. With ZES findings 1.0 it works from `module`, `path`, `level` and `campaign` (it never parses the human-readable `detail`); with findings 1.1 (`kind`, `subject`, `related`, `evidence`, `scan_roots`, a draft that ZES does not emit yet) it uses those fields instead. GER then re-derives every relation and hazard from the filesystem, so a wrong suggestion is refused, not executed.
+ZET does not look at the file system. With ZES findings 1.0 it works from `module`, `path`, `level` and `campaign` (it never parses the human-readable `detail`); with findings 1.1 (ZES 0.4.0: `kind`, `subject`, `related`, `evidence`, `scan_roots`) it uses those fields instead. Findings 1.2 (ZES 0.5.0: `code` / `params`, English `detail`, id v2) is accepted too; ZET never recomputes ids, so a plan stays tied to the findings.json it was made from. GER then re-derives every relation and hazard from the filesystem, so a wrong suggestion is refused, not executed.
 
 | Finding (examples) | `auto` suggestion | Mandatory follow-ups | `checklist` |
 |---|---|---|---|
@@ -96,6 +96,7 @@ See [SKILL.md](SKILL.md) for the detailed procedure and how to write decisions, 
 | [schemas/triage-input.schema.json](schemas/triage-input.schema.json) | ZET | Input |
 | [schemas/vendor/findings.schema.json](schemas/vendor/findings.schema.json) | ZES | Version-pinned copy (source commit and SHA-256 in `schemas/vendor/VENDOR.json`) |
 | [schemas/vendor/findings-1.1.schema.json](schemas/vendor/findings-1.1.schema.json) | ZES | ZES findings 1.1 (ZES 0.4.0+): 1.0 plus optional `kind` / `subject` / `locators` / `related` / `evidence` and top-level `scan_roots`. Pinned copy of ZES's `schemas/findings.schema.json` |
+| [schemas/vendor/findings-1.2.schema.json](schemas/vendor/findings-1.2.schema.json) | ZES | ZES findings 1.2 (ZES 0.5.0+): 1.1 plus `code` / `params`; `detail` is English and `id` is v2 (`module\|campaign\|path\|code\|params`) |
 | [schemas/vendor/actions.schema.json](schemas/vendor/actions.schema.json) | GER | Version-pinned copy of the params of each GER action |
 
 At runtime, the schema files themselves are validated with a subset validator written in the standard library (`zet/jsonschema_lite.py`). The tests confirm that its verdicts match the official `jsonschema`.

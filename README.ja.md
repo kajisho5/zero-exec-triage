@@ -21,7 +21,7 @@
 
 ## 何を提案するか
 
-ZET はファイルシステムを見ません。ZES の findings 1.0 では `module`・`path`・`level`・`campaign` から判断し（人が読む `detail` の文章は解析しません）、findings 1.1（`kind`・`subject`・`related`・`evidence`・`scan_roots`。ZES はまだ出さない草案）ならそれを使います。GER はすべての関係と危険パターンをファイルシステムから導き直すため、誤った提案は実行されずに拒否されます。
+ZET はファイルシステムを見ません。ZES の findings 1.0 では `module`・`path`・`level`・`campaign` から判断し（人が読む `detail` の文章は解析しません）、findings 1.1（ZES 0.4.0。`kind`・`subject`・`related`・`evidence`・`scan_roots`）ならそれを使います。findings 1.2（ZES 0.5.0。`code`・`params`、英語の `detail`、id v2）も受け付けます。ZET は id を計算し直さないため、plan は作ったときの findings.json に結び付いたままです。GER はすべての関係と危険パターンをファイルシステムから導き直すため、誤った提案は実行されずに拒否されます。
 
 | finding（例） | `auto` の提案 | 必須の後続作業 | `checklist` |
 |---|---|---|---|
@@ -94,6 +94,7 @@ bin/zet verify-log
 | [schemas/triage-input.schema.json](schemas/triage-input.schema.json) | ZET | 入力 |
 | [schemas/vendor/findings.schema.json](schemas/vendor/findings.schema.json) | ZES | 版固定の写し（`schemas/vendor/VENDOR.json` に取り込み元コミットと SHA-256） |
 | [schemas/vendor/findings-1.1.schema.json](schemas/vendor/findings-1.1.schema.json) | ZES | ZES findings 1.1（ZES 0.4.0 以降）。1.0 に任意の `kind` / `subject` / `locators` / `related` / `evidence` とトップレベルの `scan_roots` を足したもの。ZES の `schemas/findings.schema.json` の版固定の写し |
+| [schemas/vendor/findings-1.2.schema.json](schemas/vendor/findings-1.2.schema.json) | ZES | ZES の findings 1.2（ZES 0.5.0 以降）: 1.1 に `code`・`params` を足したもの。`detail` は英語、`id` は v2（`module\|campaign\|path\|code\|params`） |
 | [schemas/vendor/actions.schema.json](schemas/vendor/actions.schema.json) | GER | GER の操作ごとの params の版固定の写し |
 
 実行時はスキーマファイルそのものを、標準ライブラリで書いたサブセット検証器（`zet/jsonschema_lite.py`）で検証します。テストでは公式の `jsonschema` と判定が一致することを確認しています。

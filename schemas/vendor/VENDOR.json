@@ -22,6 +22,14 @@
       "source_commit": "0ee9ce683ce28fa490d0018fb7533c2724e4beac",
       "schema_version": "1.1",
       "sha256": "a6f4f7f36aff2352c827d3d63b0211a29092234f5eceda02617a46ccc4dcc157"
+    },
+    {
+      "path": "schemas/vendor/findings-1.2.schema.json",
+      "source_repo": "kajisho5/zero-exec-shield",
+      "source_path": "schemas/findings.schema.json",
+      "source_commit": "03093d280f211a8d139b6ee026ca2e17e26b4bee",
+      "schema_version": "1.2",
+      "sha256": "8cc83528a7e3f75b5c5dc9012ecf0e0c4de086bd5301d83cb90b0756c494510e"
     }
   ]
 }
