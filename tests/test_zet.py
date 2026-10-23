@@ -444,6 +444,27 @@ class TestRegressions(unittest.TestCase):
         self.assertEqual(self.run_cli("check", str(self.d / "in.json"), str(self.d / "plan.json"),
                                       "--operator", "alice", "--now", "2026-10-22T11:00:00Z")[0], 0)
 
+    # 6. held は errors[] のモジュール専用（CRITICAL を held に移して判断を逃れられない）
+    def test_held_only_for_errored_modules(self):
+        inp = make_input("findings-partial.json")
+        plan = fill(inp, triage.draft(inp, NOW, "alice"))
+        self.assertEqual(triage.check(inp, plan), [])
+        by_id = {x["id"]: x for x in inp["findings"]["findings"]}
+        crit = next(i for i in plan["items"] if by_id[i["finding_id"]]["level"] == "CRITICAL")
+        p = copy.deepcopy(plan)
+        p["items"].remove(crit)
+        p["held"].append({"finding_id": crit["finding_id"], "module": by_id[crit["finding_id"]]["module"], "reason": "later"})
+        self.assertIn("I-1", codes(triage.check(inp, p)))
+        p = copy.deepcopy(plan)
+        p["held"].append({"finding_id": None, "module": "§2", "reason": "later"})
+        self.assertIn("I-10", codes(triage.check(inp, p)))
+        inp["findings"]["errors"].append({"module": "§15", "reason": "module_failed"})
+        p = triage.draft(inp, NOW, "alice")
+        self.assertEqual(triage.check(inp, fill(inp, p)), [])
+        h = next(h for h in p["held"] if h["finding_id"] is not None)
+        h["module"] = "§6"  # errors[] にあるが finding の実モジュールではない
+        self.assertIn("I-10", codes(triage.check(inp, fill(inp, p))))
+
 
 if __name__ == "__main__":
     unittest.main()

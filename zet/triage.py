@@ -160,6 +160,20 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
     for fid, where in seen.items():
         if by_id[fid]["module"] in errmods and where != "held":
             v.append(Violation("I-10", f"未確定モジュール {by_id[fid]['module']} の finding は held にすること", fid))
+    # held は errors[] のモジュール（未確定）専用。確定したモジュールの finding を held で判断から外せない
+    for h in plan["held"]:
+        fid, mod = h["finding_id"], h.get("module")
+        if fid is None:
+            if mod not in errmods:
+                v.append(Violation("I-10", f"モジュール {mod} は errors[] に無いためモジュール単位で held にできません"))
+            continue
+        x = by_id.get(fid)
+        if x is None:
+            continue
+        if mod is not None and mod != x["module"]:
+            v.append(Violation("I-10", f"held の module {mod} が finding のモジュール {x['module']} と一致しません", fid))
+        if x["module"] not in errmods:
+            v.append(Violation("I-1", f"モジュール {x['module']} は確定しているため held にできません（items で判断すること）", fid))
     held_mods = {h.get("module") for h in plan["held"] if h["finding_id"] is None}
     for mod in errmods:
         if mod not in held_mods:
