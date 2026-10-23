@@ -271,6 +271,27 @@ class TestFindings11Draft(unittest.TestCase):
         inp10 = make_input([dict(mcp)])
         self.assertIn("I-11", codes(triage.validate_input(inp10)))
 
+    def test_12_code_params_accepted(self):
+        # findings 1.2 (ZES 0.5.0): code / params, English detail, id v2. ZET never parses detail or recomputes ids
+        mcp = F("§17", "HIGH", R + "/.mcp.json", "mcp-poisoning", kind="mcp.dangerous_command",
+                locators=[{"format": "json", "pointer": "/mcpServers/evil"}], code="s17.dangerous_command", params={},
+                detail="Dangerous command in MCP or agent config command/args")
+        lock = F("§15", "CRITICAL", R + "/package-lock.json", "chaindrop-keyv", kind="pkg.lockfile_compromised",
+                 subject={"ecosystem": "npm", "package": "keyv", "version": "6.0.0", "safe_version": "latest 5.x", "fixed_versions": []},
+                 evidence={"kind": "file", "hash": SHA}, code="s15.pkg_compromised_safe",
+                 params={"ecosystem": "npm", "package": "keyv", "safe_version": "latest 5.x", "version": "6.0.0"})
+        inp = make_input([mcp, lock], version="1.2", scope=False, scan_roots=[R])
+        self.assertEqual(triage.validate_input(inp), [])
+        d = triage.draft(inp, NOW, "alice")
+        self.assertEqual(len(d["items"]), 2)
+        final = triage.finalize(inp, adopt(d), now=NOW)
+        self.assertEqual({i["finding_id"] for i in final["items"]}, {mcp["id"], lock["id"]})
+        # params values are strings only; code / params are not allowed in 1.1 (strict per version)
+        bad = copy.deepcopy(inp)
+        bad["findings"]["findings"][1]["params"]["version"] = 6
+        self.assertIn("I-11", codes(triage.validate_input(bad)))
+        self.assertIn("I-11", codes(triage.validate_input(make_input([dict(mcp)], version="1.1", scope=False, scan_roots=[R]))))
+
     def test_evidence_of(self):
         x = F("§49", "HIGH", R + "/s", "skillpact-divergence", content=False, detail="dd")
         self.assertEqual(triage.evidence_of(x)["kind"], "detail")

@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kajisho5/zero-exec-shield/schemas/findings.schema.json",
+  "title": "ZES findings.json",
+  "description": "Zero-Exec Shield（検知層）の出力契約。ZET（判断層）はこのスキーマで入力を検証し、schema_version を固定して参照する。未知フィールドは拒否（strict）。 1.1 は 1.0 に任意の項目（トップレベルの scan_roots、finding の kind / subject / locators / related / evidence）を足したもので、id（module|campaign|path|detail）と evidence_hash の作り方は 1.0 と同じ。 1.2 は finding に code（文の識別子）と params（文に入る値）を足し、detail を英語にし、id を v2（module|campaign|path|code|params。言語と文言に依らない）にしたもの。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "incident_bundle", "scan_started_at", "scan_finished_at", "scan_mode", "status", "findings", "errors"],
+  "properties": {
+    "schema_version": { "const": "1.2" },
+    "scan_roots": { "type": "array", "items": { "type": "string", "pattern": "^/" }, "description": "検査ルート（--root）の実パス。ZET はこれを plan.scope.roots にする" },
+    "incident_bundle": { "type": "string", "pattern": "^ZES-[0-9]{4}-[A-Z]{3}-[A-Z]+-V[0-9]+\\.[0-9]+$" },
+    "scan_started_at": { "$ref": "#/$defs/rfc3339_utc" },
+    "scan_finished_at": { "$ref": "#/$defs/rfc3339_utc" },
+    "scan_mode": { "enum": ["quick", "standard", "full", "worm", "skillpact"] },
+    "status": { "enum": ["ok", "partial", "error"] },
+    "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+    "errors": { "type": "array", "items": { "$ref": "#/$defs/error" } }
+  },
+  "$defs": {
+    "rfc3339_utc": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "effect": { "enum": ["read", "write", "network", "exec", "spend", "send"], "description": "SkillPact 0.8 の 6 効果（spec §6）" },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "level", "module", "campaign", "path", "detail", "evidence_hash"],
+      "properties": {
+        "id": { "$ref": "#/$defs/sha256", "description": "id v2 (1.2): sha256 of \"zes-id-v2|\" + module + \"|\" + campaign + \"|\" + path + \"|\" + code + \"|\" + params, where params is key=value in C-locale key order joined by U+001F, and a null campaign or path is the empty string. Independent of the language and the wording" },
+        "level": { "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] },
+        "module": { "type": "string", "pattern": "^§([1-9]|[1-4][0-9])$" },
+        "campaign": { "type": ["string", "null"] },
+        "path": { "type": ["string", "null"], "pattern": "^/", "description": "絶対パス、または null。ファイル内容は含めない" },
+        "detail": { "type": "string", "description": "English sentence: the catalog entry f.<code> (i18n/en.json) with params filled in. Never depends on --lang or the locale" },
+        "evidence_hash": { "$ref": "#/$defs/sha256" },
+        "code": { "type": "string", "pattern": "^[a-z0-9_.]+$", "description": "Message id (1.2): the catalog key f.<code>. Language-neutral" },
+        "params": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Values of the message (1.2): string values, keys matching ^[a-z_]+$ (the catalog placeholders). Never file contents" },
+        "kind": { "type": "string", "pattern": "^[a-z0-9_.]+$", "description": "機械可読な種別（例 pkg.compromised, pkg.vulnerable, mcp.dangerous_command, gha.unpinned）" },
+        "subject": { "type": "object", "additionalProperties": false, "properties": { "ecosystem": { "type": "string" }, "package": { "type": "string" }, "version": { "type": ["string", "null"] }, "safe_version": { "type": ["string", "null"] }, "fixed_versions": { "type": "array", "items": { "type": "string" } } } },
+        "locators": { "type": "array", "items": { "type": "object", "additionalProperties": false, "properties": { "format": { "enum": ["json", "jsonc", "toml", "yaml", "ini", "text", "plist"] }, "pointer": { "type": "string" }, "line": { "type": "integer", "minimum": 1 }, "line_sha256": { "$ref": "#/$defs/sha256" } } }, "description": "同じファイルの該当箇所（内容は出さずハッシュだけ）" },
+        "related": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["relation", "path"], "properties": { "relation": { "type": "string" }, "path": { "type": "string", "pattern": "^/" } } } },
+        "evidence": { "type": "object", "additionalProperties": false, "required": ["kind", "hash"], "properties": { "kind": { "enum": ["file", "large_file", "tree", "symlink", "detail"] }, "hash": { "$ref": "#/$defs/sha256" } }, "description": "evidence_hash の種類つき版（tree は ger-tree-v1）" },
+        "skillpact": { "$ref": "#/$defs/skillpact" }
+      },
+      "if": { "properties": { "module": { "const": "§49" } } },
+      "then": { "required": ["skillpact"] },
+      "else": { "not": { "required": ["skillpact"] } }
+    },
+    "skillpact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_path", "contract_version", "level", "signed", "author", "declared_effects", "observed_effects", "policy_decision", "l2_tested", "divergence", "diff_anomaly"],
+      "properties": {
+        "contract_path": { "type": ["string", "null"], "pattern": "^/" },
+        "contract_version": { "type": ["string", "null"] },
+        "level": { "type": ["string", "null"], "description": "ZES が確認できた水準。ZES の部分検査に合格した契約のみ \"L1\"、それ以外は null。契約の自己申告は使わない。L2/L3 は ZES では判定しない" },
+        "signed": { "type": "boolean", "description": "integrity.signatures[] があるか（ZES は署名を検証しない。信頼の根拠にしない）" },
+        "author": { "type": ["string", "null"], "description": "作者署名（role author）の鍵 ed25519:<b64> または sigstore:<issuer>|<identity>。未検証" },
+        "declared_effects": { "type": "array", "items": { "$ref": "#/$defs/effect" }, "uniqueItems": true, "description": "permissions.<effect>.level が none 以外の効果" },
+        "observed_effects": { "type": "array", "items": { "$ref": "#/$defs/effect" }, "uniqueItems": true },
+        "policy_decision": { "type": ["string", "null"], "description": "予約（ZES はポリシーの allow/ask/deny を評価しないため常に null）" },
+        "l2_tested": { "type": "boolean", "description": "予約（ZES はテストを実行・検証しないため常に false）" },
+        "divergence": { "type": "array", "items": { "$ref": "#/$defs/effect" }, "uniqueItems": true },
+        "diff_anomaly": { "type": "boolean" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module", "reason"],
+      "properties": {
+        "module": { "type": "string", "pattern": "^(§([1-9]|[1-4][0-9])|core)$" },
+        "reason": { "type": "string" }
+      }
+    }
+  }
+}

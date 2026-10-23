@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### findings 1.2（ZES 0.5.0）を受け付ける
+
+- `schema_version` が `"1.2"` の findings を `schemas/vendor/findings-1.2.schema.json`（ZES の `schemas/findings.schema.json` の固定コピー）で検証する。1.2 は 1.1 に `code`（文の識別子）と `params`（文に入る値。文字列だけ）を足し、`detail` を英語にし、`id` を v2（module|campaign|path|code|params）にしたもの
+- ZET は id を計算し直さず、`detail` の文を解析しないため、判断の規則（I-1〜I-13）は変わらない。evidence の推定（通常ファイル以外は detail の SHA-256）も 1.2 で同じ
+- 版ごとに strict: 1.1 の findings に `code` / `params` があれば拒否、`params` の値は文字列だけ
+
 ### ロックファイルの finding を自動修復と数えない（I-13）
 
 - **原因**: ロックファイルの finding（`pkg.lockfile_compromised`）に `related: npm_installed` があると、draft が隣の `node_modules/<name>` の quarantine を auto として提案し、同じ対象の `node_modules/<name>/package.json` の finding と同じ group にまとめていた。隔離しても ZES はロックファイルの中身を見て同じ finding を報告するため、E2E（lockfile-installed）で「自動で消えるはずの finding が残る」になっていた
