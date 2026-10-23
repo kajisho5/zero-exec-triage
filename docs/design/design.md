@@ -134,7 +134,7 @@ zero-exec-triage/
 │   └── vendor/{findings.schema.json, VENDOR.json}   # ZES からの版固定の写しと SHA-256
 ├── tests/{run.py, run-tests.sh, test_zet.py, fixtures/}
 ├── docs/design/{design.md, flow.svg}
-├── README.md
+├── README.md / README.ja.md
 └── CHANGELOG.md
 ```
 
