@@ -52,7 +52,7 @@ bin/zet finalize triage-input.json plan.draft.json --operator alice -o remediati
 | I-8 | 承認者は policy.approvers の中から |
 | I-9 | due_at は判断日 + deadlines[level_effective] 日以内、recheck_at（exception/defer）は判断ウィンドウ内。判断日（decided_at）は created_at 以上・実行時刻以下 |
 | I-10 | errors[] のモジュールの finding は held にする（GER に渡さない）。held は errors[] のモジュールにだけ使える |
-| I-11 | strict スキーマ（未知フィールド・重複キー・不正な時刻・有限でない数値・不正なサロゲートを拒否）。plan_hash を持つ plan は check / finalize でも plan_hash を検証 |
+| I-11 | strict スキーマ（未知フィールド・重複キー・深すぎる入れ子・不正な時刻・有限でない数値・不正なサロゲートを拒否）。plan_hash を持つ plan は check / finalize でも plan_hash を検証 |
 | I-12 | 入力が partial なら plan も partial で、errors[] のモジュールをモジュール単位で held にする |
 
 ## スキーマ

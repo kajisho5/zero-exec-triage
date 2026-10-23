@@ -531,6 +531,14 @@ class TestRegressionsR2(unittest.TestCase):
         self.assertEqual(codes(cm.exception.violations), {"I-11"})
         self.assertEqual(self.run_cli("check", str(self.d / "in.json"), str(self.d / "plan.json"), "--operator", "alice")[0], 3)
 
+    # 7a. 深すぎる入れ子は I-11（終了コード 3）で、内部エラー（70）にしない
+    def test_deeply_nested_input_is_contract_error(self):
+        (self.d / "deep.json").write_text("[" * 100000 + "]" * 100000, encoding="utf-8")
+        with self.assertRaises(ContractError) as cm:
+            load_json(str(self.d / "deep.json"))
+        self.assertEqual(codes(cm.exception.violations), {"I-11"})
+        self.assertEqual(self.run_cli("validate", str(self.d / "deep.json"), "--operator", "alice")[0], 3)
+
 
 if __name__ == "__main__":
     unittest.main()

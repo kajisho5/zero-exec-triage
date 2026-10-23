@@ -83,8 +83,12 @@ def load_json(path: str) -> Any:
                          object_pairs_hook=_no_duplicate_keys)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as e:
         raise ContractError([Violation("I-11", f"{path}: JSON として解析できません（{e}）")]) from e
+    except RecursionError:
+        raise ContractError([Violation("I-11", f"{path}: JSON の入れ子が深すぎます")]) from None
     try:
         canonical(obj)
+    except RecursionError:
+        raise ContractError([Violation("I-11", f"{path}: JSON の入れ子が深すぎます")]) from None
     except (UnicodeEncodeError, ValueError):
         # 対になっていないサロゲート（\ud800 など）は正規化 JSON にできない。内容は表示しない
         raise ContractError([Violation("I-11", f"{path}: UTF-8 で表せない文字列（不正なサロゲート）を含みます")]) from None
