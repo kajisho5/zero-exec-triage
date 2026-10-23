@@ -195,14 +195,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "validate":
             violations = triage.validate_input(inp)
         elif args.command == "draft":
-            output_obj = triage.draft(inp, now, args.operator, args.plan_id)
+            output_obj = triage.draft(inp, now, args.operator, args.plan_id, now_override=args.now is not None)
         else:
             plan = load_json(args.plan)
             record["plan_input_hash"] = sha256(canonical(plan))
             if args.command == "check":
                 violations = triage.check(inp, plan, now=now)
             else:
-                output_obj = triage.finalize(inp, plan, now=now)
+                output_obj = triage.finalize(inp, plan, now=now, now_override=args.now is not None)
     except ContractError as e:
         violations = e.violations
     except OSError as e:

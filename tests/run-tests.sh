@@ -16,7 +16,7 @@ else
   command -v jq >/dev/null 2>&1 || { echo "FAIL: zero-exec 検証には jq が必要です"; echo "結果: FAIL"; exit 1; }
   jq -n --slurpfile f "$ROOT/tests/fixtures/findings-skillpact.json" '{schema_version:"1.0", findings:$f[0],
     policy:{deadlines:{CRITICAL:7,HIGH:30,MEDIUM:60,LOW:90}, decision_window_days:14, approvers:["security-lead"]},
-    skillpact_policy:{l3_trusted:false, diff_anomaly_threshold:0.3, destructive_requires_human:true}}' >"$TMP/in.json"
+    skillpact_policy:{l3_trusted:false}}' >"$TMP/in.json"
   # 期待する終了コード: 下書き（decision 未記入）の check は契約違反（3）を返すのが正しい
   for c in "0 validate $TMP/in.json" "0 draft $TMP/in.json -o $TMP/d.json" "3 check $TMP/in.json $TMP/d.json"; do
     want="${c%% *}"; c="${c#* }"
