@@ -1037,7 +1037,6 @@ def stat_is_fifo(p) -> bool:
     return stat.S_ISFIFO(os.lstat(p).st_mode)
 
 
-
 class TestLauncherNoSite(unittest.TestCase):
     """bin/zet は site を読み込まない（-S）。site-packages の .pth は import site で実行されるため、
     ツール自身の中でコードを実行させないには -I だけでは足りない。"""
@@ -1055,6 +1054,7 @@ class TestLauncherNoSite(unittest.TestCase):
             with open(log) as fh:
                 args = fh.read().split("\n")
             self.assertEqual(args[:2], ["-I", "-S"])
+
 
 if __name__ == "__main__":
     unittest.main()
