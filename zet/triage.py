@@ -26,8 +26,8 @@ def validate_input(inp: Any) -> list[Violation]:
     if v:
         return v
     f = inp["findings"]
-    # findings 1.0（ZES の現行）と 1.1（kind / subject / locators / related / evidence / scan_roots。ZES 側は未実装の草案）
-    name = "vendor/findings-1.1-draft.schema.json" if isinstance(f, dict) and f.get("schema_version") == "1.1" \
+    # findings 1.0（ZES 0.3.x）と 1.1（ZES 0.4.0 以降。kind / subject / locators / related / evidence / scan_roots）
+    name = "vendor/findings-1.1.schema.json" if isinstance(f, dict) and f.get("schema_version") == "1.1" \
         else "vendor/findings.schema.json"
     v = schema_violations(name, f, "findings")
     if v:

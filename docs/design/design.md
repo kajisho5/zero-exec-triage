@@ -225,8 +225,8 @@ findings 1.0 では `module`・`path`（basename とディレクトリの形）�
 
 必須の後続作業は、提案と同じ操作（type と target）を採用した場合は提案の `followup`、それ以外の自動修復では、campaign のある finding・マルウェアの痕跡のモジュール（§2 §15 §18 §20 §24 §30 §31 §40 §42）なら CL-IR。chmod と checklist には求めない。雛形（CL-PKG・CL-VENV・CL-SECRET・CL-IR・CL-LAUNCHD・CL-SYSTEMD・CL-CRON・CL-EXT・CL-MCP・CL-MCP-PIN・CL-SHELL・CL-LDSO・CL-PHP・CL-PHP-RESTART・CL-UPGRADE・CL-PWN・CL-PIN・CL-SKILL・CL-ENV・CL-REVIEW）は閉じた表で、`{path}` だけを finding の path に置き換える。
 
-### 9.4 findings 1.1（草案）
-ZES は findings 1.1 をまだ出さない。ZET は `schema_version: "1.1"` の findings を `schemas/vendor/findings-1.1-draft.schema.json`（ZET が書いた草案。VENDOR.json に `status: draft`）で検証し、任意の `kind` / `subject` / `locators` / `related` / `evidence` / `scan_roots` を使う。1.0 の findings に 1.1 の項目があれば strict のため拒否する。ZES が 1.1 を出すようになったら、ZES の `schemas/findings.schema.json` を正として写し直す。
+### 9.4 findings 1.1
+ZES 0.4.0 は findings 1.1 を出す。ZET は `schema_version: "1.1"` の findings を `schemas/vendor/findings-1.1.schema.json`（ZES の `schemas/findings.schema.json` の写し。VENDOR.json に版固定）で検証し、任意の `kind` / `subject` / `locators` / `related` / `evidence` / `scan_roots` を使う。1.0 の findings（ZES 0.3.x）も引き続き `schemas/vendor/findings.schema.json` で受け付け、1.0 の findings に 1.1 の項目があれば strict のため拒否する。
 
 ### 9.5 流れ
 `zet draft` → 判断者が提案を採用 → `ger preview`（GER が現在のファイルから params を埋める。拒否は checklist に切り替える）→ `zet check` / `finalize` → 承認 → GER。

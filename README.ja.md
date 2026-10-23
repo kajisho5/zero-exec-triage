@@ -92,7 +92,7 @@ bin/zet verify-log
 | [schemas/remediation-plan.schema.json](schemas/remediation-plan.schema.json) | **ZET** | 出力契約（1.1 で `scope` と、action の `relation` / `finding_path` / `group` / `evidence` / `followup` を追加。chmod だけの 1.0 の計画も有効）。GER は版固定で参照 |
 | [schemas/triage-input.schema.json](schemas/triage-input.schema.json) | ZET | 入力 |
 | [schemas/vendor/findings.schema.json](schemas/vendor/findings.schema.json) | ZES | 版固定の写し（`schemas/vendor/VENDOR.json` に取り込み元コミットと SHA-256） |
-| [schemas/vendor/findings-1.1-draft.schema.json](schemas/vendor/findings-1.1-draft.schema.json) | ZES（**草案**） | ZET が書いた ZES findings 1.1 の草案（任意の `kind` / `subject` / `locators` / `related` / `evidence`、トップレベルの `scan_roots`）。ZES はまだ 1.1 を出さない。ZES が出すようになったら ZES のスキーマで置き換える |
+| [schemas/vendor/findings-1.1.schema.json](schemas/vendor/findings-1.1.schema.json) | ZES | ZES findings 1.1（ZES 0.4.0 以降）。1.0 に任意の `kind` / `subject` / `locators` / `related` / `evidence` とトップレベルの `scan_roots` を足したもの。ZES の `schemas/findings.schema.json` の版固定の写し |
 | [schemas/vendor/actions.schema.json](schemas/vendor/actions.schema.json) | GER | GER の操作ごとの params の版固定の写し |
 
 実行時はスキーマファイルそのものを、標準ライブラリで書いたサブセット検証器（`zet/jsonschema_lite.py`）で検証します。テストでは公式の `jsonschema` と判定が一致することを確認しています。

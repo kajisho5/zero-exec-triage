@@ -1,4 +1,4 @@
-"""ZET 0.2: finding → 修復の対応表（draft の提案）、group、必須の後続作業（I-13）、関係（I-4）、plan 1.1、findings 1.1（草案）。"""
+"""ZET 0.2: finding → 修復の対応表（draft の提案）、group、必須の後続作業（I-13）、関係（I-4）、plan 1.1、findings 1.1。"""
 from __future__ import annotations
 
 import copy

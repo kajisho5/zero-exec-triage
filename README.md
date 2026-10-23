@@ -94,7 +94,7 @@ See [SKILL.md](SKILL.md) for the detailed procedure and how to write decisions, 
 | [schemas/remediation-plan.schema.json](schemas/remediation-plan.schema.json) | **ZET** | Output contract (1.1 adds `scope`, and `relation` / `finding_path` / `group` / `evidence` / `followup` on actions; a 1.0 plan with chmod only is still valid). GER references it pinned to a version |
 | [schemas/triage-input.schema.json](schemas/triage-input.schema.json) | ZET | Input |
 | [schemas/vendor/findings.schema.json](schemas/vendor/findings.schema.json) | ZES | Version-pinned copy (source commit and SHA-256 in `schemas/vendor/VENDOR.json`) |
-| [schemas/vendor/findings-1.1-draft.schema.json](schemas/vendor/findings-1.1-draft.schema.json) | ZES (**draft**) | ZET's draft of ZES findings 1.1 (optional `kind` / `subject` / `locators` / `related` / `evidence`, top-level `scan_roots`). ZES does not emit 1.1 yet; replace this with ZES's own schema when it does |
+| [schemas/vendor/findings-1.1.schema.json](schemas/vendor/findings-1.1.schema.json) | ZES | ZES findings 1.1 (ZES 0.4.0+): 1.0 plus optional `kind` / `subject` / `locators` / `related` / `evidence` and top-level `scan_roots`. Pinned copy of ZES's `schemas/findings.schema.json` |
 | [schemas/vendor/actions.schema.json](schemas/vendor/actions.schema.json) | GER | Version-pinned copy of the params of each GER action |
 
 At runtime, the schema files themselves are validated with a subset validator written in the standard library (`zet/jsonschema_lite.py`). The tests confirm that its verdicts match the official `jsonschema`.

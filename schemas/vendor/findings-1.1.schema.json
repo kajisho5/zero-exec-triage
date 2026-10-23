@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/kajisho5/zero-exec-triage/schemas/vendor/findings-1.1-draft.schema.json",
-  "title": "ZES findings.json 1.1（草案・ZES 未実装）",
-  "description": "【草案】ZES findings 1.1 の提案（GER 修復能力拡張 設計書 §5.2）。ZES にはまだ実装されていない。ZET が 1.1 の入力を受け付けるために、1.0（schemas/vendor/findings.schema.json）に任意の項目 kind / subject / locators / related / evidence と、トップレベルの scan_roots を足したもの。ZES が 1.1 を出すときは ZES の schemas/findings.schema.json を正として写し直すこと。以下は 1.0 の説明: Zero-Exec Shield（検知層）の出力契約。ZET（判断層）はこのスキーマで入力を検証し、schema_version を固定して参照する。未知フィールドは拒否（strict）。",
+  "$id": "https://github.com/kajisho5/zero-exec-shield/schemas/findings.schema.json",
+  "title": "ZES findings.json",
+  "description": "Zero-Exec Shield（検知層）の出力契約。ZET（判断層）はこのスキーマで入力を検証し、schema_version を固定して参照する。未知フィールドは拒否（strict）。 1.1 は 1.0 に任意の項目（トップレベルの scan_roots、finding の kind / subject / locators / related / evidence）を足したもので、id（module|campaign|path|detail）と evidence_hash の作り方は 1.0 と同じ。",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "incident_bundle", "scan_started_at", "scan_finished_at", "scan_mode", "status", "findings", "errors"],

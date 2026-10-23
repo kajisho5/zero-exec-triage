@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### ZES findings 1.1 の正式版を写す
+
+- `schemas/vendor/findings-1.1-draft.schema.json`（ZET が書いた草案）を、ZES 0.4.0 の `schemas/findings.schema.json` の写し `schemas/vendor/findings-1.1.schema.json` に置き換えた（内容は草案と同じで、`$id`・title・description が ZES のもの）。VENDOR.json の `status: draft` を外し、`source_repo` / `source_path` / `source_commit` を ZES に向けた
+
 ### GER 修復能力拡張 Phase 1 への対応（plan 1.1。設計 0.2、Q-1〜Q-6 を推奨どおり採用）
 
 - **plan スキーマ 1.1**: plan に `scope`（承認する検査範囲）、action に `relation`・`finding_path`・`group`・`evidence {kind, hash}`・`followup`、`constraints.suggested_actions` を追加。`action.target` は checklist だけ null にできる。1.0 の計画（chmod のみ）も有効。GER に写す
