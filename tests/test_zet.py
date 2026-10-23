@@ -767,6 +767,28 @@ class TestRegressionsR3(unittest.TestCase):
         problems = audit.verify_chain()
         self.assertEqual(len(problems), 3, problems)
 
+    # 2. 末尾の / と、与えられたパスのままの親ディレクトリを処理の前に検査する（書き出し時に失敗させない）
+    def test_output_trailing_slash_and_parent_as_given(self):
+        d = self.d
+        (d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
+        (d / "existing.json").write_text("{}", encoding="utf-8")
+        for out in (str(d / "nd") + "/", str(d / "existing.json") + "/", str(d / "nd" / ".." / "x.json"),
+                    str(d / "existing.json" / ".." / "x.json")):
+            code, _, err = self.run_cli("finalize", str(d / "in.json"), str(d / "plan.json"), "--operator", "alice", "-o", out)
+            self.assertEqual(code, 64, out)
+            self.assertNotIn("出力を書き出せません", err)
+            self.assertEqual(self.run_cli("draft", str(d / "in.json"), "--operator", "alice", "-o", out)[0], 64, out)
+        self.assertEqual(self.audit_records(), [])
+        self.assertEqual((d / "existing.json").read_text(), "{}")
+        self.assertFalse((d / "x.json").exists())
+        cwd = os.getcwd()
+        os.chdir(d)
+        try:
+            self.assertEqual(self.run_cli("draft", "in.json", "--operator", "alice", "-o", "rel.json")[0], 0)
+        finally:
+            os.chdir(cwd)
+        self.assertTrue((d / "rel.json").exists())
+
 
 def stat_is_fifo(p) -> bool:
     return stat.S_ISFIFO(os.lstat(p).st_mode)

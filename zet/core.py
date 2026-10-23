@@ -127,7 +127,7 @@ def write_atomic(path: str, obj: Any) -> None:
 
 def write_text_atomic(path: str, text: str) -> None:
     """一時ファイルに書いてから os.replace。途中で失敗しても部分ファイルを残さない。"""
-    d = os.path.dirname(os.path.abspath(path)) or "."
+    d = os.path.dirname(path) or "."  # -o の事前検査（cli._output_problem）と同じ親ディレクトリ
     fd, tmp = tempfile.mkstemp(prefix=".zet-", suffix=".tmp", dir=d)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:

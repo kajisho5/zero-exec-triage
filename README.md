@@ -38,7 +38,7 @@ bin/zet finalize triage-input.json plan.draft.json --operator alice -o remediati
 | `check` | Checks invariants I-1 to I-12 |
 | `finalize` | Writes the finalized plan (with `plan_hash`) only if every check passes |
 
-Exit codes: `0` pass / `3` contract violation / `64` usage or environment error (including `-o` being a directory, not a regular file, the same file as an input, the audit log or a path inside the audit log directory, or in an unwritable location, and failure to write the output) / `70` internal error (including when the output cannot be serialized to JSON). `-o` is checked before any processing. Options: `--now` (pins the current time; test-only, accepted only when the environment variable `ZET_ALLOW_NOW_OVERRIDE=1` is set, otherwise `64`) and `--plan-id` (draft).
+Exit codes: `0` pass / `3` contract violation / `64` usage or environment error (including `-o` being a directory, not a regular file, the same file as an input, the audit log or a path inside the audit log directory, or in an unwritable location, and failure to write the output) / `70` internal error (including when the output cannot be serialized to JSON). `-o` is checked before any processing (a path ending with `/` is rejected, and the parent directory is checked as given). Options: `--now` (pins the current time; test-only, accepted only when the environment variable `ZET_ALLOW_NOW_OVERRIDE=1` is set, otherwise `64`) and `--plan-id` (draft).
 
 See [SKILL.md](SKILL.md) for the detailed procedure and how to write decisions, and [docs/design/design.md](docs/design/design.md) for the design.
 

@@ -61,9 +61,12 @@ def _output_problem(out: str, sources: list[str]) -> str | None:
     try:
         if os.path.isdir(out):
             return f"-o がディレクトリです: {out}"
+        if out.endswith(("/", os.sep)):  # 存在しないディレクトリ・ファイルの後ろの / は書き出し時まで失敗しない
+            return f"-o の末尾に / は付けられません: {out}"
         if os.path.exists(out) and not os.path.isfile(out):
             return f"-o が通常ファイルではありません: {out}"  # /dev/full など。os.replace で置き換えない
-        parent = os.path.dirname(os.path.abspath(out))
+        # 親は与えられたパスのまま調べる（abspath は nd/../x の nd が無いことを隠す）
+        parent = os.path.dirname(out) or "."
         if not os.path.isdir(parent):
             return f"-o のディレクトリがありません: {parent}"
         if not os.access(parent, os.W_OK | os.X_OK):
