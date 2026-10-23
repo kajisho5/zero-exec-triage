@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### GER 修復能力拡張 Phase 1 への対応（plan 1.1。設計 0.2、Q-1〜Q-6 を推奨どおり採用）
+
+- **plan スキーマ 1.1**: plan に `scope`（承認する検査範囲）、action に `relation`・`finding_path`・`group`・`evidence {kind, hash}`・`followup`、`constraints.suggested_actions` を追加。`action.target` は checklist だけ null にできる。1.0 の計画（chmod のみ）も有効。GER に写す
+- **draft が修復を提案する**: finding → 修復の対応表（`zet/remedy.py`）から `auto`（quarantine / edit_json / edit_toml / remove_line / disable_mcp_server）と `checklist` の提案を付ける。同じ対象の auto を `action.group` でまとめ、他の finding の quarantine が扱う INFO は自動 defer せず同じ group を提案する。findings 1.0 は module・path・level・campaign で判断し、detail は解析しない
+- **必須の後続作業**（I-13）: 自動修復には finding ごとに必須のチェックリスト（CL-IR・CL-SECRET・CL-LAUNCHD・CL-EXT・CL-PKG など）を `action.followup` に付け、欠けていれば確定させない。checklist・followup は雛形の手順をすべて含むこと。findings 1.1 の `kind` ごとに許す操作
+- **I-4 の拡張**: target と finding の path の関係を閉じた集合（self / npm_pkg_dir / npm_installed / pypi_record / ext_dir / skill_dir / none）で確かめる。同じ対象は group でだけ。確定した action の params は GER の `actions.schema.json` に合うこと。chmod 以外のファイルを変える操作は `plan.scope` の下だけ
+- **承認者**: root が必要な対象（`/etc` など）へのファイルを変える remediate は 2 名（I-6）
+- **finalize**: `relation`・`finding_path`・`evidence` を写す（`evidence_hash` は書かない）。`scope` を写す。group に入れた INFO の期限は LOW の期限
+- **入力**: triage-input の `policy.scope`（任意）。findings 1.1（`kind` / `subject` / `locators` / `related` / `evidence` / `scan_roots`）を任意の項目として受け付ける。ZES は 1.1 をまだ出さないため、ZET が書いた草案 `schemas/vendor/findings-1.1-draft.schema.json`（VENDOR.json に `status: draft`）で検証する
+- **vendor**: GER の `schemas/actions.schema.json` を `schemas/vendor/actions.schema.json` に版固定で写す
+- `zet/jsonschema_lite.py` に `maxLength` / `maxItems` を追加（GER にも写す）
+
 ### round 3 の修正
 
 - **I-4: action.target は finding の `path` と一致すること**（F7）。配下のパスは許さない（ZET はファイルシステムを見ないため `path` がディレクトリかを判断できず、前方一致では `/` などを指す finding が任意のファイルを対象にできる）。`path` が null の finding は remediate できない
