@@ -4,8 +4,9 @@
   zet draft    <triage-input.json> --operator NAME [--plan-id UUID] [-o OUT]
   zet check    <triage-input.json> <plan.json> --operator NAME
   zet finalize <triage-input.json> <plan.json> --operator NAME -o OUT
+  zet verify-log [LOG]          監査ログのハッシュチェーンを検証する（読むだけ。監査ログには記録しない）
 
-終了コード: 0=合格 / 3=契約違反 / 64=引数・環境エラー / 70=内部エラー
+終了コード: 0=合格 / 3=契約違反（verify-log はチェーンの破損） / 64=引数・環境エラー / 70=内部エラー
 """
 from __future__ import annotations
 
@@ -14,6 +15,8 @@ import datetime as dt
 import os
 import re
 import sys
+
+from pathlib import Path
 
 from . import audit, triage
 from .core import ContractError, canonical, dumps_pretty, fmt_ts, load_json, now_utc, sha256, write_text_atomic
@@ -34,6 +37,8 @@ class _Parser(argparse.ArgumentParser):
 def _parser() -> argparse.ArgumentParser:
     p = _Parser(prog="zet", description="ZET — Zero-Exec Triage（判断層）")
     sub = p.add_subparsers(dest="command", required=True)
+    s = sub.add_parser("verify-log", help="監査ログのハッシュチェーンを検証する")
+    s.add_argument("log", nargs="?", help="検証するログ（既定 $ZET_LOG_DIR/zet-audit.jsonl）")
     for name, plan in (("validate", False), ("draft", False), ("check", True), ("finalize", True)):
         s = sub.add_parser(name)
         s.add_argument("input")
@@ -58,6 +63,25 @@ def _report(violations) -> None:
     for v in violations:
         fid = f" [{v.finding_id}]" if v.finding_id else ""
         _err(f"  {v.code}{fid}: {v.message}")
+
+
+def _verify_log(path: str | None) -> int:
+    p = Path(path) if path else audit.log_path()
+    try:
+        n, problems = audit.scan_chain(p)
+    except OSError as e:
+        _err(f"zet verify-log: 監査ログを読めません（{e}）")
+        return EXIT_USAGE
+    if not p.exists():
+        _err(f"zet verify-log: 監査ログがありません: {p}")
+        return EXIT_USAGE
+    if problems:
+        _err(f"zet verify-log: ハッシュチェーンが壊れています（{len(problems)} 件、全 {n} 行）: {p}")
+        for x in problems:
+            _err(f"  {x}")
+        return EXIT_CONTRACT
+    _err(f"zet verify-log: OK（{n} 件、ハッシュチェーンは健全）: {p}")
+    return EXIT_OK
 
 
 def _output_problem(out: str, sources: list[str]) -> str | None:
@@ -128,6 +152,8 @@ def _write_stdout(text: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     _harden_streams()
     args = _parser().parse_args(argv)
+    if args.command == "verify-log":
+        return _verify_log(args.log)
     if not _PERSON.fullmatch(args.operator):
         _err("zet: --operator の形式が不正です")
         return EXIT_USAGE
