@@ -5,7 +5,10 @@ import copy
 import hashlib
 import io
 import json
+import errno
 import os
+import stat
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -643,6 +646,97 @@ class TestRegressionsR2(unittest.TestCase):
             self.assertEqual(self.run_cli(*args)[0], 64)
             os.chown(logd, 0, -1)
         self.assertEqual(len(audit.log_path().read_text().splitlines()), 2)
+
+    def audit_records(self) -> list[dict]:
+        p = audit.log_path()
+        return [json.loads(line) for line in p.read_text().splitlines()] if p.exists() else []
+
+    # 1. -o は処理の前に検査する（ディレクトリ・存在しないディレクトリ・通常ファイル以外・入力と同じファイル）
+    def test_output_path_validated_before_work(self):
+        d = self.d
+        (d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
+        os.link(d / "plan.json", d / "hard.json")
+        (d / "sym.json").symlink_to(d / "in.json")
+        os.mkfifo(d / "fifo")
+        before = {n: (d / n).read_bytes() for n in ("in.json", "plan.json")}
+        for out in (str(d), str(d / "nodir" / "x.json"), str(d / "fifo"), str(d / "in.json"), str(d / "plan.json"),
+                    str(d / "hard.json"), str(d / "sym.json"), str(d / "." / "in.json"), ""):
+            code, _, err = self.run_cli("finalize", str(d / "in.json"), str(d / "plan.json"), "--operator", "alice", "-o", out)
+            self.assertEqual(code, 64, out)
+            self.assertNotIn("Traceback", err)
+        self.assertEqual(self.run_cli("draft", str(d / "in.json"), "--operator", "alice", "-o", str(d / "in.json"))[0], 64)
+        self.assertEqual({n: (d / n).read_bytes() for n in before}, before)
+        self.assertTrue(stat_is_fifo(d / "fifo"))
+        self.assertEqual(self.audit_records(), [])
+
+    # 1. 書き出しに失敗したら監査ログは ok にしない（output_hash / plan_hash も残さない）
+    def test_output_write_failure_not_audited_as_ok(self):
+        d = self.d
+        (d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")
+        args = ("finalize", str(d / "in.json"), str(d / "plan.json"), "--operator", "alice", "-o", str(d / "final.json"))
+
+        def enospc(*a, **k):
+            raise OSError(errno.ENOSPC, "No space left on device")
+        orig = cli.write_text_atomic
+        cli.write_text_atomic = enospc
+        try:
+            self.assertEqual(self.run_cli(*args)[0], 64)
+        finally:
+            cli.write_text_atomic = orig
+        self.assertFalse((d / "final.json").exists())
+
+        class FullStdout(io.StringIO):
+            def write(self, s):
+                raise OSError(errno.ENOSPC, "No space left on device")
+        err = io.StringIO()
+        with redirect_stdout(FullStdout()), redirect_stderr(err):
+            self.assertEqual(cli.main(["draft", str(d / "in.json"), "--operator", "alice"]), 64)
+        self.assertNotIn("Traceback", err.getvalue())
+
+        orig = cli.dumps_pretty
+        cli.dumps_pretty = lambda obj: (_ for _ in ()).throw(RecursionError("maximum recursion depth exceeded"))
+        try:
+            self.assertEqual(self.run_cli(*args)[0], 70)
+        finally:
+            cli.dumps_pretty = orig
+        self.assertFalse((d / "final.json").exists())
+        recs = self.audit_records()
+        self.assertEqual([r["result"] for r in recs], ["error", "error", "error"])
+        self.assertTrue(all("output_hash" not in r and "plan_hash" not in r for r in recs))
+        self.assertEqual(self.run_cli(*args)[0], 0)
+        rec = self.audit_records()[-1]
+        self.assertEqual((rec["result"], rec["output_hash"]), ("ok", "sha256:" + hashlib.sha256(
+            canonical(json.loads((d / "final.json").read_text()))).hexdigest()))
+
+    def test_stdout_enospc_via_dev_full(self):
+        if not os.path.exists("/dev/full"):
+            self.skipTest("/dev/full がありません")
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "ZET_LOG_DIR": str(self.d / "log")}
+        with open("/dev/full", "w") as full:
+            r = subprocess.run([str(ROOT / "bin" / "zet"), "draft", str(self.d / "in.json"), "--operator", "alice"],
+                               stdout=full, stderr=subprocess.PIPE, env=env, timeout=60)
+        self.assertEqual(r.returncode, 64, r.stderr.decode())
+        self.assertNotIn(b"Traceback", r.stderr)
+        self.assertEqual([x["result"] for x in self.audit_records()], ["error"])
+
+    # 1. 入れ子の深い params: 出力できたときだけ ok（Python の版により成功するか 70 になる）
+    def test_deep_params_audit_matches_output(self):
+        it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
+        it["action"] = {"type": "write_config", "target": "/srv/app/config", "params": {"deep": "DEEP"}}
+        n = 3000
+        (self.d / "plan.json").write_text(json.dumps(self.plan).replace('"DEEP"', '{"a":' * n + "{}" + "}" * n), encoding="utf-8")
+        code, _, err = self.run_cli("finalize", str(self.d / "in.json"), str(self.d / "plan.json"),
+                                    "--operator", "alice", "-o", str(self.d / "final.json"))
+        self.assertIn(code, (0, 3, 70), err)
+        self.assertNotIn("Traceback", err)
+        rec = self.audit_records()[-1]
+        self.assertEqual((self.d / "final.json").exists(), code == 0)
+        self.assertEqual(rec["result"] == "ok", code == 0)
+        self.assertEqual("output_hash" in rec, code == 0)
+
+
+def stat_is_fifo(p) -> bool:
+    return stat.S_ISFIFO(os.lstat(p).st_mode)
 
 
 if __name__ == "__main__":

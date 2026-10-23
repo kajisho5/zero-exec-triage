@@ -34,7 +34,7 @@ bin/zet finalize triage-input.json plan.draft.json --operator alice -o remediati
 | `check` | 不変条件 I-1〜I-12 の検査 |
 | `finalize` | 全合格時のみ確定 plan（`plan_hash` 付き）を書き出す |
 
-終了コード: `0` 合格 / `3` 契約違反 / `64` 引数・環境エラー / `70` 内部エラー。オプション `--now`（時刻固定。テスト専用で、環境変数 `ZET_ALLOW_NOW_OVERRIDE=1` のときだけ受け付ける。無ければ `64`）、`--plan-id`（draft）。
+終了コード: `0` 合格 / `3` 契約違反 / `64` 引数・環境エラー（`-o` がディレクトリ・通常ファイル以外・入力と同じファイル・書き込めない場所、出力の書き出し失敗を含む）/ `70` 内部エラー（出力を JSON にできない場合を含む）。`-o` は処理の前に検査します。オプション `--now`（時刻固定。テスト専用で、環境変数 `ZET_ALLOW_NOW_OVERRIDE=1` のときだけ受け付ける。無ければ `64`）、`--plan-id`（draft）。
 
 詳しい手順と判断の書き方は [SKILL.md](SKILL.md)、設計は [docs/design/design.md](docs/design/design.md) を参照してください。
 
@@ -67,12 +67,12 @@ bin/zet finalize triage-input.json plan.draft.json --operator alice -o remediati
 
 ## 監査ログ
 
-`$ZET_LOG_DIR/zet-audit.jsonl`（既定 `~/.local/state/zet/`）。1 行 1 レコード（command / operator / input_hash / output_hash / started_at / finished_at / result / violations / prev_hash。`--now` を使った実行には `now_override: true`）。拒否も記録し、`prev_hash` のハッシュチェーンで改ざんを検出できます。ログに書けない場合、またはログのディレクトリが実行ユーザー以外の所有かグループ・他者から書き込み可能な場合は何もしません（終了コード `64`）。
+`$ZET_LOG_DIR/zet-audit.jsonl`（既定 `~/.local/state/zet/`）。1 行 1 レコード（command / operator / input_hash / output_hash / started_at / finished_at / result / violations / prev_hash。`--now` を使った実行には `now_override: true`）。出力（`-o` または標準出力）を書き出せた場合だけ `result: ok` と `output_hash` を記録し、書き出せなければ `result: error` です。拒否も記録し、`prev_hash` のハッシュチェーンで改ざんを検出できます。ログに書けない場合、またはログのディレクトリが実行ユーザー以外の所有かグループ・他者から書き込み可能な場合は何もしません（終了コード `64`）。
 
 ## テスト
 
 ```bash
-tests/run-tests.sh   # 単体テスト（43 件）＋ strace による execve 監視（bash / python3 以外を起動しないこと）
+tests/run-tests.sh   # 単体テスト（55 件）＋ strace による execve 監視（bash / python3 以外を起動しないこと）
 ```
 
 `jsonschema` が入っていれば検証器の判定一致テストも行います（開発時のみの依存。無ければ SKIP）。

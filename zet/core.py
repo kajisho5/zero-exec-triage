@@ -116,14 +116,22 @@ def _finite_float(s: str) -> float:
     return x
 
 
+def dumps_pretty(obj: Any) -> str:
+    """出力ファイル・標準出力の書式。深すぎる入れ子は RecursionError、有限でない数値は ValueError。"""
+    return json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n"
+
+
 def write_atomic(path: str, obj: Any) -> None:
+    write_text_atomic(path, dumps_pretty(obj))
+
+
+def write_text_atomic(path: str, text: str) -> None:
     """一時ファイルに書いてから os.replace。途中で失敗しても部分ファイルを残さない。"""
     d = os.path.dirname(os.path.abspath(path)) or "."
     fd, tmp = tempfile.mkstemp(prefix=".zet-", suffix=".tmp", dir=d)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False)
-            f.write("\n")
+            f.write(text)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
