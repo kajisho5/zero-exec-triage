@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         if out:
             write_atomic(out, output_obj)
         else:
-            json.dump(output_obj, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
+            json.dump(output_obj, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False)
             sys.stdout.write("\n")
     if code == EXIT_OK:
         print(f"zet {args.command}: OK", file=sys.stderr)

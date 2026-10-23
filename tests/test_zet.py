@@ -12,7 +12,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from zet import audit, cli, triage
-from zet.core import ROOT, ContractError, parse_ts, plan_hash, validator
+from zet.core import ROOT, ContractError, canonical, load_json, parse_ts, plan_hash, validator, write_atomic
 
 FIX = ROOT / "tests" / "fixtures"
 NOW = parse_ts("2026-10-22T10:00:00Z")
@@ -387,6 +387,24 @@ class TestRegressions(unittest.TestCase):
         self.assertEqual(self.run_cli("finalize", str(self.d / "in.json"), str(self.d / "final.json"),
                                       "--operator", "alice", "-o", str(self.d / "out.json"))[0], 3)
         self.assertFalse((self.d / "out.json").exists())
+
+    # 3. 有限でない数値（1e400 → inf）は読み込みで拒否し、Infinity を書き出さない
+    def test_non_finite_number_rejected(self):
+        self.plan["items"][0]["action"]["params"]["n"] = 1
+        raw = json.dumps(self.plan).replace('"n": 1', '"n": 1e400')
+        (self.d / "plan.json").write_text(raw, encoding="utf-8")
+        with self.assertRaises(ContractError) as cm:
+            load_json(str(self.d / "plan.json"))
+        self.assertEqual(codes(cm.exception.violations), {"I-11"})
+        code, _, _ = self.run_cli("finalize", str(self.d / "in.json"), str(self.d / "plan.json"),
+                                  "--operator", "alice", "-o", str(self.d / "out.json"))
+        self.assertEqual(code, 3)
+        self.assertFalse((self.d / "out.json").exists())
+        with self.assertRaises(ValueError):
+            canonical({"x": float("inf")})
+        with self.assertRaises(ValueError):
+            write_atomic(str(self.d / "nan.json"), {"x": float("nan")})
+        self.assertFalse((self.d / "nan.json").exists())
 
 
 if __name__ == "__main__":

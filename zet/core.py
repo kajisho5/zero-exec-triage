@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -61,7 +62,7 @@ def now_utc(override: str | None) -> dt.datetime:
 # --- 正規化 JSON / ハッシュ ------------------------------------------------
 def canonical(obj: Any) -> bytes:
     """キー順ソート・区切り ',' ':'・UTF-8。plan_hash と input_hash の基準（GER と同一定義）。"""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
 def sha256(data: bytes) -> str:
@@ -78,13 +79,21 @@ def load_json(path: str) -> Any:
     with open(path, "rb") as f:
         raw = f.read()
     try:
-        return json.loads(raw.decode("utf-8"), parse_constant=_reject_constant)
+        obj = json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, parse_float=_finite_float)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as e:
         raise ContractError([Violation("I-11", f"{path}: JSON として解析できません（{e}）")]) from e
+    return obj
 
 
 def _reject_constant(name: str) -> Any:
     raise ValueError(f"非標準の JSON 定数 {name} は受け付けません")
+
+
+def _finite_float(s: str) -> float:
+    x = float(s)
+    if not math.isfinite(x):  # 1e400 など。書き出すと Infinity（不正な JSON）になる
+        raise ValueError("有限でない数値は受け付けません")
+    return x
 
 
 def write_atomic(path: str, obj: Any) -> None:
@@ -93,7 +102,7 @@ def write_atomic(path: str, obj: Any) -> None:
     fd, tmp = tempfile.mkstemp(prefix=".zet-", suffix=".tmp", dir=d)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=True)
+            json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False)
             f.write("\n")
             f.flush()
             os.fsync(f.fileno())
