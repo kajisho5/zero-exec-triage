@@ -372,6 +372,22 @@ class TestRegressions(unittest.TestCase):
         self.assertEqual(self.run_cli("draft", str(self.d / "in.json"), "--operator", "ci",
                                       "--plan-id", "00000000-0000-0000-0000-000000000000\n")[0], 64)
 
+    # 2. 確定 plan（plan_hash 付き）は check / finalize でも plan_hash を検証する
+    def test_check_and_finalize_verify_plan_hash_of_final_plan(self):
+        final = triage.finalize(self.inp, self.plan)
+        self.assertEqual(triage.check(self.inp, final), [])
+        self.assertEqual(triage.finalize(self.inp, final), final)  # 改ざんが無ければ冪等
+        final["items"][0]["action"]["target"] = "/etc/shadow"
+        self.assertIn("I-11", codes(triage.check(self.inp, final)))
+        with self.assertRaises(ContractError) as cm:
+            triage.finalize(self.inp, final)
+        self.assertIn("I-11", codes(cm.exception.violations))
+        (self.d / "final.json").write_text(json.dumps(final), encoding="utf-8")
+        self.assertEqual(self.run_cli("check", str(self.d / "in.json"), str(self.d / "final.json"), "--operator", "alice")[0], 3)
+        self.assertEqual(self.run_cli("finalize", str(self.d / "in.json"), str(self.d / "final.json"),
+                                      "--operator", "alice", "-o", str(self.d / "out.json"))[0], 3)
+        self.assertFalse((self.d / "out.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

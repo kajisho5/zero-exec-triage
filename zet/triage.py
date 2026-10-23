@@ -123,8 +123,13 @@ def draft(inp: dict, now: dt.datetime, operator: str, plan_id: str | None = None
 
 # --- 不変条件チェック（zet check） -----------------------------------------
 def check(inp: dict, plan: Any, final: bool = False) -> list[Violation]:
-    """I-1〜I-12。未記入の decision も違反として返す。final=True は確定 plan（finalize の出力 / GER 入力）として検査する。"""
+    """I-1〜I-12。未記入の decision も違反として返す。final=True は確定 plan（finalize の出力 / GER 入力）として検査する。
+
+    plan_hash を持つ plan は確定 plan なので、final の指定にかかわらず確定 plan として検査する
+    （改ざんされた確定 plan が check を通り、finalize で黙って再ハッシュされるのを防ぐ）。
+    """
     require_valid_input(inp)
+    final = final or (isinstance(plan, dict) and "plan_hash" in plan)
     v = schema_violations("remediation-plan.schema.json", plan, "plan")
     if v:
         return v
