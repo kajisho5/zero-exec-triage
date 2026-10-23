@@ -79,7 +79,8 @@ def load_json(path: str) -> Any:
     with open(path, "rb") as f:
         raw = f.read()
     try:
-        obj = json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, parse_float=_finite_float)
+        obj = json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, parse_float=_finite_float,
+                         object_pairs_hook=_no_duplicate_keys)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as e:
         raise ContractError([Violation("I-11", f"{path}: JSON として解析できません（{e}）")]) from e
     try:
@@ -92,6 +93,16 @@ def load_json(path: str) -> Any:
 
 def _reject_constant(name: str) -> Any:
     raise ValueError(f"非標準の JSON 定数 {name} は受け付けません")
+
+
+def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:
+    # 重複キーは後勝ちで黙って消える（読む側ごとに解釈が割れる）ため拒否する。キー名は表示しない
+    d: dict = {}
+    for k, val in pairs:
+        if k in d:
+            raise ValueError("重複したキーがあります")
+        d[k] = val
+    return d
 
 
 def _finite_float(s: str) -> float:

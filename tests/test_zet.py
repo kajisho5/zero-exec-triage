@@ -515,5 +515,22 @@ class TestRegressions(unittest.TestCase):
         self.assertEqual(self.run_cli("validate", str(self.d / "in.json"), "--operator", "alice")[0], 64)
 
 
+class TestRegressionsR2(unittest.TestCase):
+    """bughunt-r2 で見つかった不具合の回帰テスト。"""
+
+    setUp = TestRegressions.setUp
+    tearDown = TestRegressions.tearDown
+    run_cli = TestCliAndAudit.run_cli
+
+    # 4. 重複キーは I-11（後勝ちで黙って値が変わらない）
+    def test_duplicate_keys_rejected(self):
+        raw = json.dumps(self.plan).replace('"decision": "remediate"', '"decision": "remediate", "decision": "exception"', 1)
+        (self.d / "plan.json").write_text(raw, encoding="utf-8")
+        with self.assertRaises(ContractError) as cm:
+            load_json(str(self.d / "plan.json"))
+        self.assertEqual(codes(cm.exception.violations), {"I-11"})
+        self.assertEqual(self.run_cli("check", str(self.d / "in.json"), str(self.d / "plan.json"), "--operator", "alice")[0], 3)
+
+
 if __name__ == "__main__":
     unittest.main()
