@@ -16,7 +16,7 @@ English | [日本語](README.ja.md)
 ```
 
 - **Executes nothing**: it reads JSON and writes only the plan file and an append-only audit log
-- **No decision that breaks the contract gets through**: a plan that does not satisfy invariants I-1 to I-12 (including the SkillPact rules) cannot be finalized
+- **No decision that breaks the contract gets through**: a plan that does not satisfy invariants I-1 to I-12 (including the [SkillPact](https://github.com/kajisho5/skillpact) rules) cannot be finalized
 - **Zero dependencies**: Python 3.11+ standard library only. Launched with `python3 -I`
 
 ## Usage
