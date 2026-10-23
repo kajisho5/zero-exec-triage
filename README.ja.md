@@ -40,6 +40,8 @@ ZET はファイルシステムを見ません。ZES の findings 1.0 では `mo
 | サーバー・ランタイムの CVE（§3 §5 §6 §16 §37 §41）、PHP（§4）、pwn request（§21 §38）、固定されていないアクション・イメージ（§22 §28）、crontab と環境変数（`path: null`）、秘密情報（§8 §45 §47） | — | — | CL-UPGRADE / CL-PHP / CL-PWN / CL-PIN / CL-CRON / CL-ENV / CL-SECRET |
 
 他の finding の隔離で同じ対象ごと移される INFO（例: §30 が隔離する LaunchAgent の §10 INFO）は自動で defer せず、同じ group の隔離を提案します（再スキャンでも消えるため）。ロックファイルは書き換えず、秘密情報は自動でローテーションしません（チェックリストのまま）。
+
+チェックリストの手順の文言は英語です。英語化より前の ZET が作った下書き・計画には以前の日本語の文言が入っています。雛形のすべての手順がどちらか一方の言語で一字一句一致していれば、I-13 は引き続きそれを受け付けます（`zet/legacy_templates.py`）。GER が確かめるのは手順の形（`id`・`text`・`blocking`）だけで、文言は見ません。
 - **依存ゼロ**: Python 3.11 以上の標準ライブラリのみ。`python3 -I -S` で起動し、環境変数や site-packages の `.pth` がこのツールの中でコードを実行できないようにしています
 
 ## 使い方
@@ -50,7 +52,7 @@ bin/zet draft    triage-input.json --operator alice -o plan.draft.json
 # plan.draft.json の decision / owner / approved_by などを記入（constraints.suggested_actions から action を選ぶ）
 ger preview plan.draft.json --operator alice -o plan.previewed.json --report preview.json   # GER: params のハッシュを埋める
 bin/zet check    triage-input.json plan.previewed.json --operator alice
-bin/zet finalize triage-input.json plan.draft.json --operator alice -o remediation-plan.json
+bin/zet finalize triage-input.json plan.previewed.json --operator alice -o remediation-plan.json
 bin/zet verify-log
 ```
 

@@ -1,10 +1,12 @@
-# ZET（Zero-Exec Triage）詳細設計書 — Step 1
+English | [日本語](design.ja.md)
 
-- **版**: 設計 0.1（2026-10-22）／ 2026-10-22 承認（A-1〜A-6・B-1〜B-4 を採用）、実装 0.1.0
-- **追補**: GER 修復能力拡張 設計 0.2（2026-10-23 承認。Q-1〜Q-6 を推奨どおり採用）の Phase 1 に合わせた判断層の変更（plan 1.1、提案、I-4 の関係、I-13）を §9 に記す
-- **層**: 判断層（ZES 検知層と GER 修復層の間）
-- **原則**: Zero-Exec。ZET は何も実行しない。読むのは JSON だけ、書くのは計画ファイルと追記専用ログだけ
-- **上位文書**: [ZES スキル契約書](https://github.com/kajisho5/zero-exec-shield/blob/main/docs/skill-contracts.md)（§1〜§4, §8）
+# ZET (Zero-Exec Triage) detailed design — Step 1
+
+- **Version**: design 0.1 (2026-10-22) / approved 2026-10-22 (A-1 to A-6 and B-1 to B-4 adopted), implementation 0.1.0
+- **Addendum**: §9 describes the changes to the decision layer (plan 1.1, suggestions, I-4 relations, I-13) for Phase 1 of the GER remediation extension design 0.2 (approved 2026-10-23; Q-1 to Q-6 adopted as recommended)
+- **Layer**: decision layer (between the ZES detection layer and the GER remediation layer)
+- **Principle**: Zero-Exec. ZET executes nothing. It reads only JSON and writes only the plan file and an append-only log
+- **Parent document**: [ZES skill contracts](https://github.com/kajisho5/zero-exec-shield/blob/main/docs/skill-contracts.md) (§1 to §4, §8)
 
 ```
 [ZES] findings.json ──▶ [ZET] remediation-plan.json ──▶ [GER]
@@ -12,232 +14,237 @@
 
 ---
 
-## 1. 要件定義
+## 1. Requirements
 
-### 1.1 目的
-ZES の findings を 1 件残らず「直す（remediate）／例外にする（exception）／保留する（defer）」のいずれかに振り分け、期限・担当・承認を付けた **修復計画（remediation-plan.json）** を作る。判断の中身（どれを例外にするか）は人間または AI エージェントが決め、ZET は **契約違反の判断を通さない** ことに責任を持つ。
+### 1.1 Purpose
+Sort every single ZES finding into one of "fix (remediate)", "make an exception (exception)" or "hold (defer)", and build a **remediation plan (remediation-plan.json)** with deadlines, owners and approvals. The content of the decisions (which findings become exceptions) is decided by a person or an AI agent; ZET is responsible for **letting no decision through that breaks the contract**.
 
-### 1.2 ZET がやること / やらないこと
+### 1.2 What ZET does and does not do
 
-| やる | やらない |
+| Does | Does not |
 |---|---|
-| 入力（findings.json＋ポリシー）のスキーマ検証 | findings.json の改変（`id`/`level`/`module` は不変） |
-| 下書き計画の生成（期限計算、SkillPact 制約の付与、未確定モジュールの held 化） | ファイル変更・コマンド実行・外部通信 |
-| 人間/AI が埋めた計画の不変条件チェック | L3 署名の検証（必要なら人間が別途 `cosign verify`） |
-| 追記専用の監査ログ | 修復の実行（GER の責務） |
+| Schema validation of the input (findings.json + policy) | Modify findings.json (`id` / `level` / `module` never change) |
+| Generate a draft plan (deadline calculation, SkillPact constraints, unconfirmed modules to held) | Change files, run commands, communicate externally |
+| Check the invariants of a plan filled in by a person or an AI | Verify L3 signatures (a person runs `cosign verify` separately when needed) |
+| Append-only audit log | Carry out the remediation (the job of GER) |
 
-### 1.3 機能一覧
+### 1.3 Functions
 
-| コマンド | 入力 | 出力 | 終了コード |
+| Command | Input | Output | Exit code |
 |---|---|---|---|
-| `zet validate <triage-input.json>` | 判断層入力（契約 §2） | 検証結果（標準エラー） | 0=OK / 3=契約違反 / 64=引数エラー |
-| `zet draft <triage-input.json>` | 同上 | 下書き plan（標準出力、`status` は常に `"draft"` 相当として扱い GER へは渡せない） | 同上 |
-| `zet check <triage-input.json> <plan.json>` | 入力＋人間/AI が埋めた plan | 違反一覧 | 0=合格 / 3=違反あり |
-| `zet finalize <triage-input.json> <plan.json>` | 同上 | 確定 plan（`check` 合格時のみ書き出し、監査ログ追記） | 0 / 3 |
-| `zet verify-log [LOG]` | 監査ログ（既定 `$ZET_LOG_DIR/zet-audit.jsonl`） | ハッシュチェーンの検証結果（標準エラー。この実行は記録しない） | 0=健全 / 3=破損 / 64=ログが無い・読めない |
+| `zet validate <triage-input.json>` | Decision layer input (contract §2) | Validation result (standard error) | 0 = OK / 3 = contract violation / 64 = argument error |
+| `zet draft <triage-input.json>` | Same | Draft plan (standard output; `status` is always treated as `"draft"` and cannot be passed to GER) | Same |
+| `zet check <triage-input.json> <plan.json>` | Input + plan filled in by a person or an AI | List of violations | 0 = passed / 3 = violations |
+| `zet finalize <triage-input.json> <plan.json>` | Same | Finalized plan (written only when `check` passes; appended to the audit log) | 0 / 3 |
+| `zet verify-log [LOG]` | Audit log (default `$ZET_LOG_DIR/zet-audit.jsonl`) | Result of the hash chain verification (standard error; this run is not recorded) | 0 = intact / 3 = broken / 64 = log missing or unreadable |
 
-`finalize` だけが GER に渡せる plan を出す。`draft` の出力は意図的に GER の入力スキーマに通らない形（`status: "draft"`）にし、未判断の計画が修復層へ流れることを防ぐ（要承認 A-1）。
+Only `finalize` outputs a plan that can be passed to GER. The output of `draft` deliberately does not pass the GER input schema (`status: "draft"`), so that a plan without decisions cannot flow to the remediation layer (approval item A-1).
 
-### 1.4 非機能要件
-- **依存ゼロ**: Python 3.11 以上の標準ライブラリのみ。サードパーティ依存を持たない（判断層自身がサプライチェーン攻撃面にならないため）。`python3 -I -S` で起動（site を読み込まないので site-packages の `.pth` も実行されない）
-- **決定的**: 同じ入力・同じ時刻（`--now`）なら同じ出力。`plan_id` は `--plan-id` 指定か UUIDv4
-- **fail-closed**: 検証・チェックのいずれかが失敗したら出力ファイルを書かない（部分出力を残さない。一時ファイル→`os.replace`）
-- **macOS / Linux 両対応**
+### 1.4 Non-functional requirements
+- **Zero dependencies**: Python 3.11 or later, standard library only. No third-party dependencies (so that the decision layer itself does not become a supply chain attack surface). Started with `python3 -I -S` (site is not loaded, so `.pth` files in site-packages do not run either)
+- **Deterministic**: the same input and the same time (`--now`) give the same output. `plan_id` is given with `--plan-id` or is a UUIDv4
+- **Fail-closed**: when any validation or check fails, no output file is written (no partial output: temporary file, then `os.replace`)
+- **Both macOS and Linux**
 
 ---
 
-## 2. 入出力
+## 2. Input and output
 
-### 2.1 入力（契約 §2）
-`schema_version` / `findings`（ZES findings.json 全体）/ `policy`（`deadlines` / `decision_window_days` / `approvers`）/ `skillpact_policy`（`l3_trusted`。`diff_anomaly_threshold` / `destructive_requires_human` は予約）。
+### 2.1 Input (contract §2)
+`schema_version` / `findings` (the whole ZES findings.json) / `policy` (`deadlines` / `decision_window_days` / `approvers`) / `skillpact_policy` (`l3_trusted`; `diff_anomaly_threshold` / `destructive_requires_human` are reserved).
 
-入力検証:
-- `findings` は ZES の [`schemas/findings.schema.json`](https://github.com/kajisho5/zero-exec-shield/blob/main/schemas/findings.schema.json)（`schema_version: "1.0"` 固定）に適合すること
-- `findings.status == "error"` → **拒否**（終了コード 3）
-- `skillpact_policy.l3_trusted == true` → **拒否**（契約上 L3 を信頼根拠にしないため。true を許すのは契約改定が必要）
-- `skillpact_policy.diff_anomaly_threshold` / `destructive_requires_human` → 指定されたら **拒否**（「予約済みで未実装」と表示）。どちらも契約 §2 にあるが、ZET は評価していなかった。受け取って黙って無視すると、効いていない設定（例: `destructive_requires_human: true`）を効いていると誤解させるため、必須から外し、指定を拒否する。実装しなかった理由: ZES の `diff_anomaly` は真偽値でしきい値を当てる数値が無い。`destructive_requires_human` は判断者が人間か AI かを ZET が区別できず（`decided_by` は名前だけ）、不可逆操作の二重承認は GER の G-6 が既に課している
-- 未知フィールドは拒否（strict）
+Input validation:
+- `findings` must conform to the ZES [`schemas/findings.schema.json`](https://github.com/kajisho5/zero-exec-shield/blob/main/schemas/findings.schema.json) (`schema_version: "1.0"` fixed)
+- `findings.status == "error"` → **rejected** (exit code 3)
+- `skillpact_policy.l3_trusted == true` → **rejected** (the contract does not use L3 as a basis for trust; allowing true would need a contract change)
+- `skillpact_policy.diff_anomaly_threshold` / `destructive_requires_human` → **rejected** when given (shown as "reserved and not implemented"). Both are in contract §2, but ZET never evaluated them. Accepting a value and silently ignoring it would suggest that a setting is in effect when it is not (for example `destructive_requires_human: true`), so they are no longer required and are rejected when given. Why they were not implemented: the ZES `diff_anomaly` is a boolean, so there is no number to apply a threshold to. For `destructive_requires_human`, ZET cannot tell whether the decision maker is a person or an AI (`decided_by` is only a name), and GER's G-6 already requires two approvals for irreversible operations
+- Unknown fields are rejected (strict)
 
-### 2.2 出力（契約 §3）
-`remediation-plan.json`。ZET がスキーマの所有者として `schemas/remediation-plan.schema.json` を公開し、GER は `schema_version` を固定して参照する。
+### 2.2 Output (contract §3)
+`remediation-plan.json`. ZET owns the schema and publishes `schemas/remediation-plan.schema.json`; GER refers to it with a pinned `schema_version`.
 
-### 2.3 契約への追加提案（要承認）
+### 2.3 Proposed additions to the contract (approval needed)
 
-| ID | 提案 | 理由 |
+| ID | Proposal | Reason |
 |---|---|---|
-| A-1 | plan の `status` に `"draft"` を追加（GER は `ok` 以外拒否） | 下書きが修復層へ流れるのを防ぐ |
-| A-2 | `items[].decided_by` を追加 | 不変条件「exception は **判断者以外** の `approved_by`」を機械的に検査するには判断者の記録が必要。現契約では検査不能 |
-| A-3 | `items[].level_effective` を追加（例: SkillPact 乖離で CRITICAL 相当に引き上げた値） | 入力の `level` は改変禁止のため、引き上げ後の重大度を別フィールドで持つ |
-| A-4 | `items[].action.reversible`（bool）と `items[].action.skillpact_effects`（配列）を追加 | GER は findings を読まない（飛び越し禁止）ため、「`reversible: false` は二重承認」「exec/network/spend/send（SkillPact 0.8）宣言スキルの修復制限」を GER が判定する材料を plan で渡す必要がある |
-| A-5 | `held[]` に `module` を任意で追加（`finding_id` は `null` 可） | `errors[]` のモジュールは finding が 0 件のこともあり、finding 単位の held では「未確定」を表現できない |
-| A-6 | `plan_hash`（plan 本体の正規化 JSON の SHA-256）を出力に含める | GER の承認トークンを plan 内容に束縛し、承認後の差し替えを検出するため（GER 設計書 §4） |
-| A-7 | plan に `now_override: true`（任意。`--now` で draft / finalize した plan） | テスト用の時刻上書きで作った計画（古い・未来の created_at を持ちうる）を GER が既定で拒否できるようにする |
-| A-8 | `items[].action.evidence_hash`（任意。finalize で finding の `evidence_hash` を写す） | GER が G-7 で、検知時から対象ファイルが変わっていないことを確かめる（ZES の規則: 100MB 以下の通常ファイルは内容の SHA-256、100MB 超はパス・サイズ・mtime の SHA-256） |
-| A-9 | `items[].skillpact`（任意。finding の `signed` / `divergence` / `diff_anomaly` / `declared_effects` の要約） | GER が findings を読まずに I-5 / I-6 / I-7 と `skillpact_effects` の整合を再検査するため |
-| A-10 | `action.skillpact_effects` の要素を SkillPact 0.8 の 6 効果（`read` / `write` / `network` / `exec` / `spend` / `send`）に限定 | `"EXEC"` や `" exec "` のような表記揺れで G-6 の危険な効果の判定をすり抜けさせない |
+| A-1 | Add `"draft"` to the plan `status` (GER rejects anything other than `ok`) | Keeps drafts from flowing to the remediation layer |
+| A-2 | Add `items[].decided_by` | Checking the invariant "an exception needs an `approved_by` **other than the decision maker**" mechanically needs a record of the decision maker. It cannot be checked with the current contract |
+| A-3 | Add `items[].level_effective` (for example the value raised to CRITICAL for a SkillPact divergence) | The input `level` must not be changed, so the raised severity is kept in a separate field |
+| A-4 | Add `items[].action.reversible` (bool) and `items[].action.skillpact_effects` (array) | GER does not read findings (no skipping layers), so the plan must give GER what it needs to decide "`reversible: false` needs two approvals" and "restrictions on remediating skills that declare exec/network/spend/send (SkillPact 0.8)" |
+| A-5 | Optionally add `module` to `held[]` (`finding_id` may be `null`) | A module in `errors[]` may have no findings at all, so a held per finding cannot express "unconfirmed" |
+| A-6 | Include `plan_hash` (SHA-256 of the canonical JSON of the plan body) in the output | Binds GER's approval token to the content of the plan and detects replacement after approval (GER design §4) |
+| A-7 | `now_override: true` on the plan (optional; a plan made by draft / finalize with `--now`) | Lets GER reject by default a plan made with the test time override (it can have an old or future created_at) |
+| A-8 | `items[].action.evidence_hash` (optional; finalize copies the finding's `evidence_hash`) | Lets GER confirm in G-7 that the target file has not changed since detection (ZES rule: SHA-256 of the contents for a regular file of 100 MB or less, SHA-256 of path, size and mtime above 100 MB) |
+| A-9 | `items[].skillpact` (optional; summary of the finding's `signed` / `divergence` / `diff_anomaly` / `declared_effects`) | Lets GER recheck I-5 / I-6 / I-7 and the consistency of `skillpact_effects` without reading findings |
+| A-10 | Restrict the elements of `action.skillpact_effects` to the 6 SkillPact 0.8 effects (`read` / `write` / `network` / `exec` / `spend` / `send`) | Spelling variants such as `"EXEC"` or `" exec "` must not slip past the G-6 check for risky effects |
 
-A-7〜A-9 はいずれも任意のフィールドで、従来の plan はそのまま有効（後方互換）。ただし新しい ZET の確定 plan は A-8 / A-9 を含むため、受け取る GER もこの版のスキーマを取り込んでいる必要がある。
+A-7 to A-9 are all optional fields, and earlier plans stay valid (backward compatible). Finalized plans of the new ZET contain A-8 / A-9, though, so the receiving GER must also have taken in this version of the schema.
 
-**承認トークンの限界**: `plan_hash` は完全性（承認後に変わっていないこと）だけを示し、真正性（ZET が作ったこと）は示さない。finalize 後に plan を書き換えて `plan_hash` を計算し直すと暗号的には検出できない（承認者の署名が必要。将来の課題）。そのため GER は、findings を読まずに plan だけで評価できる不変条件（I-1 の一意性、I-3、I-4 の形と対象の正規化、I-5 / I-6 / I-7 の `skillpact` 要約との整合、I-9 の日付の前後関係、I-11、I-12 の一部）を再検査し、chmod は現在の mode に権限を足さない（絞るだけ）ことを G-7 で確かめる。
+**Limit of the approval token**: `plan_hash` shows only integrity (nothing changed after approval), not authenticity (that ZET made it). If the plan is rewritten after finalize and `plan_hash` is recomputed, this cannot be detected cryptographically (that needs the approvers' signatures; a future task). GER therefore rechecks the invariants that can be evaluated from the plan alone without reading findings (uniqueness for I-1, I-3, the shape and normalization of targets for I-4, consistency with the `skillpact` summary for I-5 / I-6 / I-7, the order of dates for I-9, I-11, part of I-12), and confirms in G-7 that a chmod adds no permission to the current mode (it only narrows).
 
 ---
 
-## 3. 判断ロジック
+## 3. Decision logic
 
-### 3.1 下書き（`draft`）の自動処理
-1. **未確定の held**: `findings.errors[]` の各モジュール → `held: {finding_id: null, module, reason: "scan_error:<reason>"}`。そのモジュールの finding も `held`（`reason: "module_unconfirmed"`）
-2. **重大度の引き上げ**: `skillpact.signed == true` かつ `divergence` 非空 → `level_effective = "CRITICAL"`
-3. **期限**: `due_at = now + policy.deadlines[level_effective]` 日、`recheck_at = now + decision_window_days` 日
-4. **選べる判断の制限**（下書きに `allowed_decisions` として注記、確定時には除去）:
-   - `skillpact.divergence` 非空 → `exception` 不可（`remediate` / `defer` のみ）
-5. **必要承認数**: `skillpact.diff_anomaly == true` → `approved_by` 2 名以上、`exception` → 1 名以上（判断者以外）
-6. `decision` は空のまま出す（自動で決めない）。`level_effective` が INFO の finding だけは `defer`＋`reason: "informational"` を既定値として入れる（要承認 B-1）。ただし他の finding の quarantine が同じ対象を扱う INFO は既定値を入れない（§9）
-7. **修復の提案**（0.2）: `constraints.suggested_actions` に `auto`（GER の操作）と `checklist` を付ける。同じ対象の auto は `action.group` でまとめる（§9）
+### 3.1 Automatic processing in the draft (`draft`)
+1. **Unconfirmed held**: each module in `findings.errors[]` → `held: {finding_id: null, module, reason: "scan_error:<reason>"}`. The findings of that module go to `held` too (`reason: "module_unconfirmed"`)
+2. **Raising the severity**: `skillpact.signed == true` and a non-empty `divergence` → `level_effective = "CRITICAL"`
+3. **Deadlines**: `due_at = now + policy.deadlines[level_effective]` days, `recheck_at = now + decision_window_days` days
+4. **Restricting the allowed decisions** (noted in the draft as `allowed_decisions`, removed on finalization):
+   - non-empty `skillpact.divergence` → no `exception` (only `remediate` / `defer`)
+5. **Required approvals**: `skillpact.diff_anomaly == true` → 2 or more in `approved_by`; `exception` → 1 or more (other than the decision maker)
+6. `decision` is left empty (it is never decided automatically). Only findings whose `level_effective` is INFO get `defer` + `reason: "informational"` as a default (approval item B-1). An INFO whose target is also handled by another finding's quarantine gets no default (§9)
+7. **Remediation suggestions** (0.2): `constraints.suggested_actions` gets `auto` (a GER operation) and `checklist`. autos on the same target are combined with `action.group` (§9)
 
-### 3.2 不変条件チェック（`check` / `finalize`）
+### 3.2 Invariant checks (`check` / `finalize`)
 
-| # | 検査 | 根拠 |
+| # | Check | Basis |
 |---|---|---|
-| I-1 | 入力の全 finding が `items[]` か `held[]` のどちらか一方に **ちょうど 1 回** 現れる | 全 finding に判断付与 |
-| I-2 | `items[].finding_id` が入力に存在する（架空 ID 禁止） | 改変禁止 |
-| I-3 | `exception` → `exception_type` ∈ {not_affected, fix_unavailable, risk_accepted}、`reason`・`recheck_at` 必須、`approved_by` ≥1 かつ `decided_by` を含まない | 契約 §4 |
-| I-4 | `remediate` → `owner` / `due_at` / `action{type,target}` 必須。`target` は正規化済みの絶対パスで、finding の `path` と一致（配下のパスは不可。ZET は `path` がディレクトリかを知らず、前方一致では `/` を指す finding が任意のファイルを許してしまう）。chmod の mode は特殊ビット・world-writable 不可。`reversible` / `skillpact_effects` / `evidence_hash` は導出値と一致 | 契約 §4、計画外の対象の禁止 |
-| I-5 | `skillpact.divergence` 非空 → `decision != exception`。`items[].skillpact` は入力と一致（確定 plan では必須） | SkillPact 不変条件 |
-| I-6 | `skillpact.diff_anomaly` → `approved_by` 2 名以上（重複除去後）。exec / network / spend / send を宣言したスキルの finding の `remediate` も 2 名以上（GER の G-6 と同じ） | 同上 |
-| I-7 | `signed && divergence` → `level_effective == CRITICAL`（`signed` は署名フィールドがあることだけを表し、ZES は署名を検証しない） | 同上 |
-| I-8 | `approved_by` は全員 `policy.approvers` に含まれる | 承認者の許可リスト |
-| I-9 | `due_at ≤ decided_at + deadlines[level_effective]` 日 | 期限超過の計画を拒否 |
-| I-10 | `held` の finding は `items` に入らない（修復層へ渡さない） | 契約 §4 |
-| I-11 | タイムスタンプはすべて RFC 3339 UTC（`Z`）、未知フィールドなし | 共通契約 |
-| I-12 | 入力が `partial` なら plan も `partial` かつ `held` 非空 | 失敗の伝播 |
-| I-13 | 自動修復の `action.followup` に、finding から決まる必須の後続作業（§9.3）がある。checklist と followup は ZET の雛形の手順をすべて変えずに含む。findings 1.1 では `kind` に許された操作だけ。ロックファイルの finding（§9.6）は checklist（再生成の手順を含む雛形）だけ | 自動修復はインシデントの終わりではない。自動で消えない finding を自動修復と数えない |
+| I-1 | Every finding of the input appears **exactly once**, in either `items[]` or `held[]` | Every finding gets a decision |
+| I-2 | `items[].finding_id` exists in the input (no made-up ids) | No modification |
+| I-3 | `exception` → `exception_type` ∈ {not_affected, fix_unavailable, risk_accepted}, `reason` and `recheck_at` required, `approved_by` ≥ 1 and not including `decided_by` | Contract §4 |
+| I-4 | `remediate` → `owner` / `due_at` / `action{type,target}` required. `target` is a normalized absolute path equal to the finding's `path` (a path below it is not allowed: ZET does not know whether `path` is a directory, and with prefix matching a finding pointing at `/` would allow any file). The chmod mode has no special bits and is not world-writable. `reversible` / `skillpact_effects` / `evidence_hash` equal the derived values | Contract §4, no targets outside the plan |
+| I-5 | non-empty `skillpact.divergence` → `decision != exception`. `items[].skillpact` matches the input (required in finalized plans) | SkillPact invariant |
+| I-6 | `skillpact.diff_anomaly` → 2 or more in `approved_by` (after removing duplicates). `remediate` of a finding of a skill that declares exec / network / spend / send also needs 2 or more (the same as GER's G-6) | Same |
+| I-7 | `signed && divergence` → `level_effective == CRITICAL` (`signed` only means that a signature field is present; ZES does not verify signatures) | Same |
+| I-8 | Everyone in `approved_by` is in `policy.approvers` | Allow list of approvers |
+| I-9 | `due_at ≤ decided_at + deadlines[level_effective]` days | Rejects plans that exceed deadlines |
+| I-10 | A held finding is not in `items` (it is not passed to the remediation layer) | Contract §4 |
+| I-11 | All timestamps are RFC 3339 UTC (`Z`); no unknown fields | Common contract |
+| I-12 | If the input is `partial`, the plan is `partial` too and `held` is not empty | Failure propagation |
+| I-13 | The `action.followup` of an automatic remediation contains the required follow-up work determined by the finding (§9.3). Checklists and followups contain all steps of the ZET template unchanged. With findings 1.1, only operations allowed for the `kind`. A lockfile finding (§9.6) gets only a checklist (with the template that contains the regeneration steps) | An automatic remediation is not the end of an incident. A finding that is not cleared automatically is not counted as automatically remediated |
 
-0.2 で I-4 を広げた: `target` は `action.relation`（§9.2）で finding の `path` と結びつけばよい。`relation: none`（target null）は checklist だけ。確定した action の params は GER の `actions.schema.json`（vendor）に合うこと。ファイルを変える item が同じ対象を持てるのは同じ `group` のときだけ。chmod 以外のファイルを変える操作には入力から導いた `plan.scope` が必要で、対象はその下。root が必要な対象（`/etc` など）は承認者 2 名（I-6）。
+0.2 widened I-4: `target` only has to be linked to the finding's `path` through `action.relation` (§9.2). `relation: none` (target null) is for checklists only. The params of a finalized action must fit GER's `actions.schema.json` (vendored). File-changing items can share a target only within the same `group`. File-changing operations other than chmod need the `plan.scope` derived from the input, and the target must be under it. Targets that need root (`/etc` and so on) need 2 approvers (I-6).
 
-`finalize` は I-1〜I-13 がすべて合格した場合のみ、`status: "ok"|"partial"` の plan と `plan_hash` を書き出す。
-
----
-
-## 4. 監査ログ（追記専用）
-
-- 既定パス: `$ZET_LOG_DIR/zet-audit.jsonl`（既定 `~/.local/state/zet/`、ZES・GER とは別ファイル・別リテンション）
-- 1 行 1 レコード: `skill`（"zet"）/ `version` / `command` / `input_hash` / `output_hash` / `started_at` / `finished_at` / `operator` / `result`（ok/rejected）/ `violations`（件数）
-- 追記は `O_APPEND` で開き、書き込み前に既存ファイルを切り詰めない。拒否（違反）も必ず記録する
-- 提案（要承認 B-2）: 各レコードに直前レコードの SHA-256（`prev_hash`）を持たせるハッシュチェーンで改ざん検出を可能にする
-- 追記の前に、排他ロックの下で末尾の連結（最終行が改行で終わる JSON object で、`prev_hash` が直前の行のハッシュと一致すること）を確かめ、壊れていれば追記しない（コマンドは何もせず終了コード 64）。壊れたチェーンの後ろに正しい連結の記録を足すと、破損箇所が埋もれて見落とされやすくなるため。以前は途中で切れた最終行の後ろに改行を補って追記していたが、それも拒否する
-- 全体の検証は `zet verify-log [LOG]`（読み取りのみ。監査ログには記録しない）
-
-`operator` は `--operator` 引数で必須指定（環境変数のユーザー名は自己申告にすぎないため、明示させる）。
+`finalize` writes the plan with `status: "ok"|"partial"` and `plan_hash` only when I-1 to I-13 all pass.
 
 ---
 
-## 5. 構成
+## 4. Audit log (append-only)
 
-### 5.1 ディレクトリ（実装に合わせて更新）
+- Default path: `$ZET_LOG_DIR/zet-audit.jsonl` (default `~/.local/state/zet/`; a separate file from ZES and GER, with its own retention)
+- One record per line: `skill` ("zet") / `version` / `command` / `input_hash` / `output_hash` / `started_at` / `finished_at` / `operator` / `result` (ok/rejected) / `violations` (count)
+- The log is opened with `O_APPEND` and the existing file is never truncated before writing. Rejections (violations) are always recorded too
+- Proposal (approval item B-2): each record carries the SHA-256 of the previous record (`prev_hash`), a hash chain that makes tampering detectable
+- Before appending, the link at the end is checked under an exclusive lock (the last line is a JSON object that ends with a newline, and its `prev_hash` matches the hash of the line before it); when it is broken nothing is appended (the command does nothing and exits with 64). Adding correctly linked records after a broken chain would bury the broken place and make it easy to miss. Earlier versions added a newline after a last line that was cut off and appended; that is rejected too now
+- The whole chain is verified with `zet verify-log [LOG]` (read only; not recorded in the audit log)
+
+`operator` must be given with the `--operator` argument (the user name from an environment variable is only a self-declaration, so it must be explicit).
+
+---
+
+## 5. Structure
+
+### 5.1 Directories (updated to match the implementation)
 ```
 zero-exec-triage/
-├── SKILL.md                         # エージェント向け手順（判断の進め方、禁止事項）
-├── bin/zet                          # 起動スクリプト（bash 組み込みのみでパス解決し python3 -I -S で起動）
+├── SKILL.md                         # procedure for agents (how to make decisions, what is forbidden)
+├── bin/zet                          # launcher (resolves the path with bash built-ins only and starts python3 -I -S)
 ├── zet/
-│   ├── __main__.py                  # エントリポイント
-│   ├── cli.py                       # 引数解析、終了コード、監査ログ記録
-│   ├── triage.py                    # 入力検証・下書き（§3.1）・不変条件 I-1〜I-12（§3.2）・確定（純粋関数）
-│   ├── core.py                      # 時刻、正規化 JSON、plan_hash、原子的書き出し
-│   ├── audit.py                     # 追記専用ログ（ハッシュチェーン）
-│   └── jsonschema_lite.py           # JSON Schema サブセット検証器（標準ライブラリ）
+│   ├── __main__.py                  # entry point
+│   ├── cli.py                       # argument parsing, exit codes, audit log records
+│   ├── triage.py                    # input validation, draft (§3.1), invariants I-1 to I-13 (§3.2), finalization (pure functions)
+│   ├── remedy.py                    # finding → remediation mapping, checklist templates, lexical relations (§9)
+│   ├── legacy_templates.py          # the earlier Japanese checklist templates, frozen (§9.7)
+│   ├── core.py                      # time, canonical JSON, plan_hash, atomic writes
+│   ├── audit.py                     # append-only log (hash chain)
+│   └── jsonschema_lite.py           # JSON Schema subset validator (standard library)
 ├── schemas/
 │   ├── triage-input.schema.json
-│   ├── remediation-plan.schema.json # ZET が所有。GER が版固定で参照
-│   └── vendor/{findings.schema.json, VENDOR.json}   # ZES からの版固定の写しと SHA-256
-├── tests/{run.py, run-tests.sh, test_zet.py, fixtures/}
-├── docs/design/{design.md, flow.svg}
+│   ├── remediation-plan.schema.json # owned by ZET; GER refers to it with a pinned version
+│   └── vendor/{findings*.schema.json, actions.schema.json, VENDOR.json}   # pinned copies from ZES / GER and their SHA-256
+├── tests/{run.py, run-tests.sh, test_zet.py, test_remedy.py, fixtures/}
+├── docs/design/{design.md, design.ja.md, flow.svg}
 ├── README.md / README.ja.md
 └── CHANGELOG.md
 ```
 
-### 5.2 モジュール分割と状態
-ZET は CLI 1 回の実行で完結し、永続状態は監査ログのみ。各コマンドは純粋関数 `(input, plan, now) -> (output | violations)` の組み合わせで実装し、I/O は `cli.py` と `audit.py` に閉じ込める。
+### 5.2 Modules and state
+ZET completes in one CLI run; the only persistent state is the audit log. Each command is a combination of pure functions `(input, plan, now) -> (output | violations)`, and I/O is confined to `cli.py` and `audit.py`.
 
-### 5.3 データ構造（Python, 型ヒント）
+### 5.3 Data structures (Python, type hints)
 ```python
 Decision = Literal["remediate", "exception", "defer"]
 @dataclass(frozen=True)
-class Violation:   code: str; finding_id: str | None; message: str   # code は "I-5" 等
+class Violation:   code: str; finding_id: str | None; message: str   # code is "I-5" and so on
 @dataclass(frozen=True)
 class Constraints: allowed: frozenset[Decision]; min_approvers: int; level_effective: str; due_limit: datetime
 ```
 
-### 5.4 スキーマ検証の実装方針（実装時に変更）
-当初は「スキーマとは別に自前の strict 検証を書く」方針だったが、二重定義のずれを避けるため、**スキーマファイルそのものを標準ライブラリ製のサブセット検証器（`zet/jsonschema_lite.py`）で解釈する**方式に変えた。未対応キーワードがスキーマに現れた場合は例外にする。テストでは公式 `jsonschema`（開発依存のみ）と判定が一致することを確認する。
+### 5.4 How schema validation is implemented (changed during implementation)
+The original plan was to write a separate strict validation next to the schemas. To avoid drift between two definitions, the approach was changed: **the schema files themselves are interpreted by a subset validator written with the standard library (`zet/jsonschema_lite.py`)**. An unsupported keyword in a schema raises an exception. The tests confirm that the results agree with the reference `jsonschema` (development dependency only).
 
 ---
 
-## 6. エッジケース
+## 6. Edge cases
 
-| ケース | 扱い |
+| Case | Handling |
 |---|---|
-| findings が 0 件・`status: ok` | 空の `items` で `ok`（正常） |
-| `status: partial` で `errors[]` のモジュールに finding が無い | `held` にモジュール単位で記録（A-5） |
-| 同一 `finding_id` が plan に 2 回 | I-1 違反 |
-| `approved_by` に同一人物が重複 | 重複除去後に人数判定（I-6） |
-| `decided_by` が `approved_by` に含まれる exception | I-3 違反（自己承認） |
-| ZES の `schema_version` が 1.0 以外 | 拒否（版固定） |
-| `--now` 未指定 | 実時刻（UTC）。`--now` はテスト専用（`ZET_ALLOW_NOW_OVERRIDE=1` が必要、監査ログと出力する plan に `now_override: true`）。テストは常に `--now` 固定 |
-| 巨大入力（数万件） | 線形処理。ID の重複検出は dict で O(n) |
+| No findings, `status: ok` | `ok` with empty `items` (normal) |
+| `status: partial` and a module in `errors[]` without findings | Recorded in `held` per module (A-5) |
+| The same `finding_id` twice in the plan | I-1 violation |
+| The same person twice in `approved_by` | Counted after removing duplicates (I-6) |
+| An exception whose `decided_by` is in `approved_by` | I-3 violation (self-approval) |
+| ZES `schema_version` other than 1.0 | Rejected (pinned version) |
+| No `--now` | The real time (UTC). `--now` is for tests only (needs `ZET_ALLOW_NOW_OVERRIDE=1`; the audit log and the output plan get `now_override: true`). The tests always pin `--now` |
+| Huge input (tens of thousands of findings) | Linear processing. Duplicate ids are found with a dict in O(n) |
 
 ---
 
-## 7. テスト方針
-- 不変条件ごとに「合格する plan」「違反する plan」を最低 1 組（I-1〜I-12 ＝ 24 ケース以上）
-- ZES の実出力（PR #1 のフィクスチャから生成）で `draft → 人手で埋めた plan → finalize` の往復
-- `findings.status == "error"` 拒否、`l3_trusted: true` 拒否、未知フィールド拒否
-- 監査ログ: 拒否時も追記される、既存行が変わらない
-- Zero-Exec: `strace -f -e trace=execve` で `python3` 以外の execve が 0 件（ZES の `tests/zero-exec.sh` と同じ方式）
+## 7. Test policy
+- For each invariant at least one pair of "a plan that passes" and "a plan that violates it" (I-1 to I-12: 24 cases or more)
+- A round trip `draft → plan filled in by hand → finalize` with real ZES output (generated from the fixtures of PR #1)
+- Rejection of `findings.status == "error"`, of `l3_trusted: true` and of unknown fields
+- Audit log: records are appended on rejection too, and existing lines never change
+- Zero-Exec: `strace -f -e trace=execve` shows no execve other than `python3` (the same method as ZES's `tests/zero-exec.sh`)
 
 ---
 
-## 8. 要承認事項（まとめ）
+## 8. Items for approval (summary)
 
-| ID | 内容 | 推奨 |
+| ID | Content | Recommendation |
 |---|---|---|
-| A-1〜A-6 | 契約への追加（§2.3） | すべて採用。採用時は ZES 側 `docs/skill-contracts.md` も改定 |
-| B-1 | INFO は既定で `defer`（informational） | 採用 |
-| B-2 | 監査ログのハッシュチェーン（`prev_hash`） | 採用 |
-| B-3 | 実装言語を Python 3.11+ 標準ライブラリのみとする（ZES は bash+jq） | 採用（日付計算・strict 検証の正確さを優先） |
-| B-4 | `zet` コマンド名と 4 サブコマンド構成 | 採用 |
+| A-1 to A-6 | Additions to the contract (§2.3) | Adopt all. On adoption, also revise `docs/skill-contracts.md` on the ZES side |
+| B-1 | INFO defaults to `defer` (informational) | Adopt |
+| B-2 | Hash chain in the audit log (`prev_hash`) | Adopt |
+| B-3 | Implementation language: Python 3.11+ standard library only (ZES is bash + jq) | Adopt (accuracy of date arithmetic and strict validation comes first) |
+| B-4 | The `zet` command name and the 4 subcommands | Adopt |
 
 
 ---
 
-## 9. 修復の提案と plan 1.1（GER 修復能力拡張 Phase 1）
+## 9. Remediation suggestions and plan 1.1 (GER remediation extension Phase 1)
 
 ### 9.1 plan 1.1
-- `schema_version: "1.1"`（ZET 0.2 の出力。1.0 の計画も有効で、GER は 1.0 では chmod だけを実行する）
-- `scope: {roots, home}`: 承認する検査範囲。triage-input の `policy.scope`（findings 1.1 では `scan_roots` を roots に使う）から作る。GER の G-9 は対象がこの下にあることと、隔離ストアが roots の下に無いことを求める
-- `action`: `relation`（§9.2）、`finding_path`（finalize が写す）、`group`、`evidence: {kind, hash}`（finalize が写す。1.1 は finding の `evidence`、1.0 は `evidence_hash` が detail の SHA-256 と一致すれば `detail`、そうでなければ `file`）、`followup`（チェックリストの配列）。`target` は checklist だけ null にできる。`evidence_hash` は 1.0 の互換用
-- `constraints.suggested_actions[]`（draft だけ）: `{label: auto|checklist, action, note?}`
+- `schema_version: "1.1"` (the output of ZET 0.2. 1.0 plans stay valid; with 1.0 GER runs only chmod)
+- `scope: {roots, home}`: the scan scope being approved. Built from `policy.scope` of the triage input (with findings 1.1, `scan_roots` are used as roots). GER's G-9 requires that targets are under it and that the quarantine store is not under roots
+- `action`: `relation` (§9.2), `finding_path` (copied by finalize), `group`, `evidence: {kind, hash}` (copied by finalize; with 1.1 the finding's `evidence`, with 1.0 `detail` when `evidence_hash` equals the SHA-256 of detail and `file` otherwise), `followup` (an array of checklists). Only a checklist can have a null `target`. `evidence_hash` is for 1.0 compatibility
+- `constraints.suggested_actions[]` (drafts only): `{label: auto|checklist, action, note?}`
 
-### 9.2 関係（I-4）
-`self` / `npm_pkg_dir` / `npm_installed` / `pypi_record` / `ext_dir` / `skill_dir` / `none`（Phase 1）。`plist_program` / `preload_lib` / `unit_wants` は Phase 2 で、findings 1.1 の `related` にあるときだけ（GER Phase 1 は拒否する）。字句上の条件は GER（`ger/actions/quarantine.py`）と同じで、GER は同じ関係をファイルシステムで確かめ直す。
+### 9.2 Relations (I-4)
+`self` / `npm_pkg_dir` / `npm_installed` / `pypi_record` / `ext_dir` / `skill_dir` / `none` (Phase 1). `plist_program` / `preload_lib` / `unit_wants` are Phase 2 and only allowed when they are in the `related` list of findings 1.1 (GER Phase 1 rejects them). The lexical conditions are the same as in GER (`ger/actions/quarantine.py`), and GER checks the same relation again on the file system.
 
-### 9.3 対応表と必須の後続作業（`zet/remedy.py`）
-findings 1.0 では `module`・`path`（basename とディレクトリの形）・`level`・`campaign` だけで判断する（`detail` は解析しない。設計 0.2 Q-1 のとおり壊れやすく安全でないため）。主な対応は README の表を参照。同じ対象への auto は group にまとめ、他の finding の **quarantine** が同じ対象（同じファイル、スキルのディレクトリ、拡張機能のディレクトリ、node_modules のパッケージ）を扱う finding には同じ group の quarantine を提案する（編集は他の finding を消さないのでまとめない）。
+### 9.3 Mapping and required follow-up work (`zet/remedy.py`)
+With findings 1.0 the decision uses only `module`, `path` (the basename and the shape of the directories), `level` and `campaign` (`detail` is not parsed: as design 0.2 Q-1 says, that would be fragile and unsafe). See the table in the README for the main mappings. autos on the same target are combined in a group, and a finding whose target (the same file, the directory of a skill, the directory of an extension, a package in node_modules) is handled by another finding's **quarantine** gets a quarantine in the same group suggested (edits do not clear other findings, so they are not combined).
 
-必須の後続作業は、提案と同じ操作（type と target）を採用した場合は提案の `followup`、それ以外の自動修復では、campaign のある finding・マルウェアの痕跡のモジュール（§2 §15 §18 §20 §24 §30 §31 §40 §42）なら CL-IR。chmod と checklist には求めない。雛形（CL-PKG・CL-LOCKFILE・CL-VENV・CL-SECRET・CL-IR・CL-LAUNCHD・CL-SYSTEMD・CL-CRON・CL-EXT・CL-MCP・CL-MCP-PIN・CL-SHELL・CL-LDSO・CL-PHP・CL-PHP-RESTART・CL-UPGRADE・CL-PWN・CL-PIN・CL-SKILL・CL-ENV・CL-REVIEW）は閉じた表で、`{path}` を finding の path、`{pkg}` を findings 1.1 の `subject.package`（無ければ `<name>`）に置き換える。
+The required follow-up work is the suggestion's `followup` when the suggested operation (type and target) is adopted; for any other automatic remediation it is CL-IR for a finding with a campaign or in a malware trace module (§2 §15 §18 §20 §24 §30 §31 §40 §42). It is not required for chmod and checklist. The templates (CL-PKG, CL-LOCKFILE, CL-VENV, CL-SECRET, CL-IR, CL-LAUNCHD, CL-SYSTEMD, CL-CRON, CL-EXT, CL-MCP, CL-MCP-PIN, CL-SHELL, CL-LDSO, CL-PHP, CL-PHP-RESTART, CL-UPGRADE, CL-PWN, CL-PIN, CL-SKILL, CL-ENV, CL-REVIEW) are a closed table; `{path}` is replaced with the finding's path and `{pkg}` with `subject.package` of findings 1.1 (`<name>` when there is none).
 
 ### 9.4 findings 1.1
-ZES 0.4.0 は findings 1.1 を出す。ZET は `schema_version: "1.1"` の findings を `schemas/vendor/findings-1.1.schema.json`（ZES の `schemas/findings.schema.json` の写し。VENDOR.json に版固定）で検証し、任意の `kind` / `subject` / `locators` / `related` / `evidence` / `scan_roots` を使う。1.0 の findings（ZES 0.3.x）も引き続き `schemas/vendor/findings.schema.json` で受け付け、1.0 の findings に 1.1 の項目があれば strict のため拒否する。
+ZES 0.4.0 outputs findings 1.1. ZET validates findings with `schema_version: "1.1"` with `schemas/vendor/findings-1.1.schema.json` (a copy of the ZES `schemas/findings.schema.json`, pinned in VENDOR.json) and uses the optional `kind` / `subject` / `locators` / `related` / `evidence` / `scan_roots`. 1.0 findings (ZES 0.3.x) are still accepted with `schemas/vendor/findings.schema.json`; 1.0 findings with 1.1 fields are rejected because the schema is strict.
 
-### 9.6 ロックファイルの finding（I-13）
-ロックファイルの finding（findings 1.1 の `kind: pkg.lockfile_compromised`、または §15 でファイル名がロックファイル〔package-lock.json・npm-shrinkwrap.json・yarn.lock・pnpm-lock.yaml・bun.lock・Gemfile.lock・Cargo.lock・composer.lock・go.sum・poetry.lock・Pipfile.lock・uv.lock・deno.lock〕）は、自動修復で消えない。ZES はロックファイルの中身を見て報告するため、隣の `node_modules/<name>`（`related: npm_installed`）を隔離しても再スキャンで同じ finding が出る。ロックファイルを直す（依存を取り除く・安全版に固定して再生成する）のは作業者かパッケージマネージャーで、GER は書き換えない。
+### 9.6 Lockfile findings (I-13)
+A lockfile finding (findings 1.1 `kind: pkg.lockfile_compromised`, or §15 with a lockfile name [package-lock.json, npm-shrinkwrap.json, yarn.lock, pnpm-lock.yaml, bun.lock, Gemfile.lock, Cargo.lock, composer.lock, go.sum, poetry.lock, Pipfile.lock, uv.lock, deno.lock]) is not cleared by automatic remediation. ZES reports it from the contents of the lockfile, so after the `node_modules/<name>` next to it (`related: npm_installed`) is quarantined, the rescan shows the same finding again. Fixing the lockfile (removing the dependency, or pinning a safe version and regenerating) is done by the operator or the package manager; GER does not rewrite it.
 
-- draft はロックファイルの finding に auto を提案しない。提案は checklist だけで、npm のロックファイルは CL-LOCKFILE（「依存を取り除いてから〔`npm uninstall <pkg>`〕、または安全版に固定してからロックファイルを再生成する」を必須の手順に含む）、それ以外は CL-PKG。`verify` を付けないため、GER は自動で完了にせず、作業者の `ger confirm`（self_attested）だけが完了にする
-- インストール済みの実体の隔離（自動の部分）は、ZES が別に報告する `node_modules/<name>/package.json` の finding（`pkg.compromised`）の `quarantine npm_pkg_dir` が行う。ZES はインストール済みの版が侵害版のときだけその finding を出すため、ロックファイルだけの finding（実体の版は侵害版でない）では隔離を提案しない（CL-LOCKFILE の `npm uninstall` と `npm ls` で扱う）
-- ロックファイルの finding を他の finding の隔離の group に入れない（同じ group にすると、隔離で消える finding として数えられる）
-- I-13: ロックファイルの finding の remediate は checklist だけで、雛形は上の CL-LOCKFILE / CL-PKG（手順は変えずにすべて含む）。quarantine（`npm_installed`）などは確定させない。`kind: pkg.lockfile_compromised` に許す操作も checklist だけ
-- 関係 `npm_installed` は I-4 と GER（G-9）に残す（ZET の提案には使わない。判断者が使っても I-13 で確定しない）
+- The draft suggests no auto for a lockfile finding. The suggestion is a checklist only: CL-LOCKFILE for an npm lockfile (its required steps include "remove the dependency [`npm uninstall <pkg>`] or pin it to a safe version, then regenerate the lockfile"), CL-PKG otherwise. There is no `verify`, so GER never completes it by itself; only the operator's `ger confirm` (self_attested) completes it
+- The quarantine of the installed copy (the automatic part) is done by `quarantine npm_pkg_dir` on the `node_modules/<name>/package.json` finding (`pkg.compromised`) that ZES reports separately. ZES reports that finding only when the installed version is the compromised one, so a lockfile-only finding (the installed version is not compromised) gets no quarantine suggestion (it is handled by `npm uninstall` and `npm ls` in CL-LOCKFILE)
+- A lockfile finding is never put in the group of another finding's quarantine (in the same group it would be counted as a finding that the quarantine clears)
+- I-13: the remediate of a lockfile finding is a checklist only, with the CL-LOCKFILE / CL-PKG template above (all steps included unchanged). quarantine (`npm_installed`) and similar are never finalized. The only operation allowed for `kind: pkg.lockfile_compromised` is checklist as well
+- The relation `npm_installed` stays in I-4 and in GER (G-9) (ZET does not use it in suggestions; if a decision maker uses it, I-13 keeps it from being finalized)
 
-これにより、E2E の「apply 後に残る finding = checklist・defer・exception・held の item」がロックファイルの finding にも成り立つ（lockfile-installed のフィクスチャ: 隔離 1・checklist 2・defer 1、apply 後に 3 件）。
+With this, the E2E rule "the findings left after apply = the checklist, defer, exception and held items" also holds for lockfile findings (the lockfile-installed fixture: 1 quarantine, 2 checklists, 1 defer; 3 findings after apply).
 
-### 9.5 流れ
-`zet draft` → 判断者が提案を採用 → `ger preview`（GER が現在のファイルから params を埋める。拒否は checklist に切り替える）→ `zet check` / `finalize` → 承認 → GER。
+### 9.5 Flow
+`zet draft` → the decision maker adopts suggestions → `ger preview` (GER fills in params from the current files; rejected ones are switched to checklist) → `zet check` / `finalize` → approval → GER.
+
+### 9.7 Language of the checklist texts
+The step texts of the templates are English (`zet/remedy.py`). Drafts and finalized plans made by ZET before the English switch contain Japanese texts, so I-13 passes a checklist when every step of its template (same id, same blocking) matches word for word either the English table or the frozen earlier Japanese table (`zet/legacy_templates.py`). One checklist cannot mix the two languages. New drafts are always English. GER checks only the shape of the steps (`id`, `text`, `blocking`) and never compares the wording with the ZET templates, so GER treats plans in either language the same.
