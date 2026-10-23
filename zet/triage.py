@@ -8,6 +8,8 @@ from typing import Any
 from .core import (DECISIONS, REVERSIBLE_BY_TYPE, ContractError, Violation,
                    fmt_ts, parse_ts, plan_hash, schema_violations)
 
+MAX_DAYS = 3650  # triage-input.schema.json の deadlines / decision_window_days の最大値
+
 
 # --- 入力検証（zet validate） ----------------------------------------------
 def validate_input(inp: Any) -> list[Violation]:
@@ -75,9 +77,26 @@ def skillpact_effects(finding: dict) -> list[str]:
     return list(sp["declared_effects"]) if sp else []
 
 
+def _timestamp_violations(plan: dict) -> list[Violation]:
+    """形式は正しくても存在しない日時（13 月、60 秒など）を I-11 として返す。"""
+    v: list[Violation] = []
+    for fid, ts in [(None, plan["created_at"])] + [(it["finding_id"], it[k]) for it in plan["items"]
+                                                    for k in ("decided_at", "due_at", "recheck_at")]:
+        try:
+            if ts is not None:
+                parse_ts(ts)
+        except ValueError:
+            v.append(Violation("I-11", f"存在しない日時です: {ts}", fid))
+    return v
+
+
 # --- 下書き（zet draft） ---------------------------------------------------
 def draft(inp: dict, now: dt.datetime, operator: str, plan_id: str | None = None) -> dict:
     require_valid_input(inp)
+    try:  # 期限の日数はスキーマ上 3650 日まで。加算できない現在時刻では下書きを作らない
+        now + dt.timedelta(days=MAX_DAYS)
+    except OverflowError:
+        raise ContractError([Violation("I-11", "現在時刻が日時の範囲を超えています")]) from None
     f = inp["findings"]
     pol = inp["policy"]
     errmods = errored_modules(f)
@@ -139,6 +158,9 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
     errmods = errored_modules(f)
     approvers = set(pol["approvers"])
     now = now or dt.datetime.now(dt.timezone.utc)
+    v = _timestamp_violations(plan)
+    if v:
+        return v
     created = parse_ts(plan["created_at"])
 
     # I-1 / I-2 / I-10: 全 finding がちょうど 1 回、items か held に現れる
@@ -248,30 +270,41 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
                 v.append(Violation("I-4", "確定 plan の action には reversible と skillpact_effects が必要です", fid))
         # I-9: 期限
         if it["decided_at"]:
-            dec = parse_ts(it["decided_at"])
-            # 判断日は期限の起点。未来や plan 作成前の日付で期限を引き延ばせないようにする
-            if dec < created:
-                v.append(Violation("I-9", "decided_at が plan の created_at より前です", fid))
-            if dec > now:
-                v.append(Violation("I-9", "decided_at が現在時刻より後です", fid))
-            days = pol["deadlines"].get(lv)
-            if it["due_at"]:
-                due = parse_ts(it["due_at"])
-                if days is None:
-                    v.append(Violation("I-9", f"policy.deadlines に {lv} が無いため due_at を検証できません", fid))
-                elif due > dec + dt.timedelta(days=days):
-                    v.append(Violation("I-9", f"due_at が期限（判断日 + {days} 日）を超えています", fid))
-                if due < dec:
-                    v.append(Violation("I-9", "due_at が判断日より前です", fid))
-            if it["recheck_at"] and d in ("exception", "defer"):
-                rc = parse_ts(it["recheck_at"])
-                if rc > dec + dt.timedelta(days=pol["decision_window_days"]):
-                    v.append(Violation("I-9", f"recheck_at が判断ウィンドウ（{pol['decision_window_days']} 日）を超えています", fid))
+            try:
+                v += _deadline_violations(it, d, lv, pol, created, now)
+            except OverflowError:
+                v.append(Violation("I-11", "期限の計算が日時の範囲を超えています", fid))
     if final:
         if plan["status"] == "draft":
             v.append(Violation("I-12", "確定 plan の status が draft です"))
         if plan.get("plan_hash") != plan_hash(plan):
             v.append(Violation("I-11", "plan_hash が plan 本体と一致しません"))
+    return v
+
+
+def _deadline_violations(it: dict, d: str, lv: str, pol: dict, created: dt.datetime, now: dt.datetime) -> list[Violation]:
+    """I-9。日時の加算が範囲外なら OverflowError（呼び出し側で I-11 にする）。"""
+    v: list[Violation] = []
+    fid = it["finding_id"]
+    dec = parse_ts(it["decided_at"])
+    # 判断日は期限の起点。未来や plan 作成前の日付で期限を引き延ばせないようにする
+    if dec < created:
+        v.append(Violation("I-9", "decided_at が plan の created_at より前です", fid))
+    if dec > now:
+        v.append(Violation("I-9", "decided_at が現在時刻より後です", fid))
+    days = pol["deadlines"].get(lv)
+    if it["due_at"]:
+        due = parse_ts(it["due_at"])
+        if days is None:
+            v.append(Violation("I-9", f"policy.deadlines に {lv} が無いため due_at を検証できません", fid))
+        elif due > dec + dt.timedelta(days=days):
+            v.append(Violation("I-9", f"due_at が期限（判断日 + {days} 日）を超えています", fid))
+        if due < dec:
+            v.append(Violation("I-9", "due_at が判断日より前です", fid))
+    if it["recheck_at"] and d in ("exception", "defer"):
+        rc = parse_ts(it["recheck_at"])
+        if rc > dec + dt.timedelta(days=pol["decision_window_days"]):
+            v.append(Violation("I-9", f"recheck_at が判断ウィンドウ（{pol['decision_window_days']} 日）を超えています", fid))
     return v
 
 

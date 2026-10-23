@@ -465,6 +465,26 @@ class TestRegressions(unittest.TestCase):
         h["module"] = "§6"  # errors[] にあるが finding の実モジュールではない
         self.assertIn("I-10", codes(triage.check(inp, fill(inp, p))))
 
+    # 7. 存在しない日時・範囲外の日時は I-11（--now は 64）で、内部エラーにしない
+    def test_invalid_and_out_of_range_timestamps(self):
+        for k, ts in (("decided_at", "2026-13-01T00:00:00Z"), ("due_at", "2026-10-22T10:00:60Z")):
+            p = copy.deepcopy(self.plan)
+            p["items"][0][k] = ts
+            self.assertIn("I-11", codes(triage.check(self.inp, p)))
+            (self.d / "plan.json").write_text(json.dumps(p), encoding="utf-8")
+            self.assertEqual(self.run_cli("check", str(self.d / "in.json"), str(self.d / "plan.json"), "--operator", "alice")[0], 3)
+        p = copy.deepcopy(self.plan)
+        p["created_at"] = "2026-02-30T00:00:00Z"
+        self.assertIn("I-11", codes(triage.check(self.inp, p)))
+        p = copy.deepcopy(self.plan)
+        it = next(i for i in p["items"] if i["decision"] == "remediate")
+        it.update(decided_at="9999-12-31T00:00:00Z", due_at="9999-12-31T00:00:00Z")
+        self.assertIn("I-11", codes(triage.check(self.inp, p, now=parse_ts("9999-12-31T23:59:59Z"))))
+        with self.assertRaises(ContractError):
+            triage.draft(self.inp, parse_ts("9999-12-30T00:00:00Z"), "alice")
+        self.assertEqual(self.run_cli("draft", str(self.d / "in.json"), "--operator", "alice", "--now", "9999-12-30T00:00:00Z")[0], 64)
+        self.assertEqual(self.run_cli("draft", str(self.d / "in.json"), "--operator", "alice", "--now", "2026-13-01T00:00:00Z")[0], 64)
+
 
 if __name__ == "__main__":
     unittest.main()

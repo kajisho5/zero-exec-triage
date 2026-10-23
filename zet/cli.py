@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import re
 import sys
@@ -63,7 +64,8 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_USAGE
     try:
         now = now_utc(args.now)
-    except ValueError:
+        now + dt.timedelta(days=triage.MAX_DAYS)  # 期限の計算が範囲外になる時刻は受け付けない
+    except (ValueError, OverflowError):
         print("zet: --now は YYYY-MM-DDTHH:MM:SSZ 形式で指定してください", file=sys.stderr)
         return EXIT_USAGE
     try:
