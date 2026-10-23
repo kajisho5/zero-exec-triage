@@ -84,7 +84,8 @@ def _action_shape_violations(a: dict, fid: str) -> list[Violation]:
     """GER が必ず拒否する action を確定させない（I-4）。GER の受理条件と同じ判定。"""
     v: list[Violation] = []
     t = a["target"]
-    if not t.startswith("/") or posixpath.normpath(t) != t or ".." in t.split("/"):
+    # normpath は先頭の // を残す（POSIX で処理系定義）ため、// はどこにあっても別に拒否する（GER は拒否する）
+    if not t.startswith("/") or "//" in t or posixpath.normpath(t) != t or ".." in t.split("/"):
         v.append(Violation("I-4", "action.target は正規化された絶対パスにすること（. / .. / 連続した / を含まない）", fid))
     if a["type"] == "chmod":
         p = a["params"]

@@ -789,6 +789,16 @@ class TestRegressionsR3(unittest.TestCase):
             os.chdir(cwd)
         self.assertTrue((d / "rel.json").exists())
 
+    # 3. 先頭の // は normpath で残るが GER は拒否する。// はどこにあっても I-4
+    def test_target_with_leading_double_slash_rejected(self):
+        it = next(i for i in self.plan["items"] if i["decision"] == "remediate")
+        for target in ("//tmp/x/t", "//", "//srv"):
+            p = copy.deepcopy(self.plan)
+            next(i for i in p["items"] if i["finding_id"] == it["finding_id"])["action"]["target"] = target
+            self.assertIn("I-4", codes(triage.check(self.inp, p)), target)
+            with self.assertRaises(ContractError):
+                triage.finalize(self.inp, p)
+
 
 def stat_is_fifo(p) -> bool:
     return stat.S_ISFIFO(os.lstat(p).st_mode)

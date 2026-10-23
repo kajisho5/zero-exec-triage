@@ -49,7 +49,7 @@ See [SKILL.md](SKILL.md) for the detailed procedure and how to write decisions, 
 | I-1 | Every finding in the input appears exactly once in either items or held, and every decision in items is filled in |
 | I-2 | No finding_id that does not exist in the input |
 | I-3 | An exception requires exception_type, reason, recheck_at, and approval by someone other than the decider (names are compared case-insensitively). A defer also requires a reason unless level_effective is INFO. decided_by / decided_at are mandatory |
-| I-4 | A remediate requires owner, due_at and action. action.target is a normalized absolute path (no `.`, `..` or repeated `/`); chmod params are only `{"mode": "0NNN"}` (no special bits) — the same acceptance rules as GER. action.reversible / skillpact_effects match the derived values |
+| I-4 | A remediate requires owner, due_at and action. action.target is a normalized absolute path (no `.`, `..` or repeated `/` anywhere, including a leading `//`); chmod params are only `{"mode": "0NNN"}` (no special bits) — the same acceptance rules as GER. action.reversible / skillpact_effects match the derived values |
 | I-5 | A finding with a non-empty skillpact.divergence cannot be an exception |
 | I-6 | A skillpact.diff_anomaly finding needs at least 2 approvers (duplicates and names differing only in case count as one) |
 | I-7 | A finding that is L3-signed and has a divergence has level_effective = CRITICAL (cannot be lowered) |
