@@ -82,6 +82,11 @@ def load_json(path: str) -> Any:
         obj = json.loads(raw.decode("utf-8"), parse_constant=_reject_constant, parse_float=_finite_float)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as e:
         raise ContractError([Violation("I-11", f"{path}: JSON として解析できません（{e}）")]) from e
+    try:
+        canonical(obj)
+    except (UnicodeEncodeError, ValueError):
+        # 対になっていないサロゲート（\ud800 など）は正規化 JSON にできない。内容は表示しない
+        raise ContractError([Violation("I-11", f"{path}: UTF-8 で表せない文字列（不正なサロゲート）を含みます")]) from None
     return obj
 
 

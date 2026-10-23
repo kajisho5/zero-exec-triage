@@ -97,7 +97,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"zet: {e}", file=sys.stderr)
         code = EXIT_USAGE
     except Exception as e:  # 想定外は fail-closed（出力しない）
-        print(f"zet: 内部エラー: {e!r}", file=sys.stderr)
+        # 例外の repr は入力文書全体を含みうるため、型名と短いメッセージだけを出す
+        print(f"zet: 内部エラー: {type(e).__name__}: {str(e)[:200]}", file=sys.stderr)
         code = EXIT_INTERNAL
 
     if code == EXIT_OK and violations:

@@ -406,6 +406,26 @@ class TestRegressions(unittest.TestCase):
             write_atomic(str(self.d / "nan.json"), {"x": float("nan")})
         self.assertFalse((self.d / "nan.json").exists())
 
+    # 4. 不正なサロゲートは I-11（終了コード 3）。内部エラーでも文書全体を stderr に出さない
+    def test_lone_surrogate_rejected_without_echo(self):
+        self.plan["items"][0]["reason"] = "SECRET-" + "x" * 5000 + "\ud800"
+        (self.d / "plan.json").write_text(json.dumps(self.plan), encoding="utf-8")  # ensure_ascii で \ud800 のまま書かれる
+        code, _, err = self.run_cli("check", str(self.d / "in.json"), str(self.d / "plan.json"), "--operator", "alice")
+        self.assertEqual(code, 3)
+        self.assertIn("I-11", err)
+        self.assertNotIn("SECRET", err)
+
+    def test_internal_error_message_is_truncated(self):
+        orig = triage.validate_input
+        triage.validate_input = lambda inp: (_ for _ in ()).throw(RuntimeError({"doc": "y" * 10000}))
+        try:
+            code, _, err = self.run_cli("validate", str(self.d / "in.json"), "--operator", "alice")
+        finally:
+            triage.validate_input = orig
+        self.assertEqual(code, 70)
+        self.assertIn("RuntimeError", err)
+        self.assertLess(len(err), 400)
+
 
 if __name__ == "__main__":
     unittest.main()
