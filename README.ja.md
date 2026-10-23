@@ -28,7 +28,8 @@ ZET はファイルシステムを見ません。ZES の findings 1.0 では `mo
 | 悪性のファイル・ペイロード・`.pth` のフック・IoC のファイル（§2 §15 §18 §20 §30 §40）、SymJack のリンク（§17） | `quarantine` self | CL-IR（と CL-SECRET） | CL-IR |
 | 侵害パッケージの `node_modules/<name>/package.json`（§15） | `quarantine` `npm_pkg_dir` | CL-PKG・CL-IR・CL-SECRET | CL-PKG |
 | 侵害された `*.dist-info`（§15 CRITICAL） | `quarantine` `pypi_record`（RECORD が無ければ GER が拒否） | CL-PKG・CL-SECRET | CL-VENV |
-| ロックファイル・requirements（§15）、`*.egg-info`、脆弱な版 | — | — | CL-PKG / CL-VENV |
+| npm のロックファイル（§15、`pkg.lockfile_compromised`。`related: npm_installed` があっても同じ。インストール済みの実体は `node_modules/<name>/package.json` の finding で隔離し、ロックファイルの finding は作業者が再生成するまで残る） | — | — | CL-LOCKFILE |
+| その他のロックファイル・requirements（§15）、`*.egg-info`、脆弱な版 | — | — | CL-PKG / CL-VENV |
 | `.mcp.json`・`mcp.json`・`.codex/config.toml` の危険な MCP サーバー（§17 HIGH） | `disable_mcp_server` | CL-MCP（と CL-IR） | CL-MCP |
 | `npx` / `uvx` の MCP サーバー（§17 MEDIUM） | — | — | CL-MCP-PIN |
 | `package.json` のライフサイクルスクリプト（§2 / §15）、`.claude/settings.json` の hooks（§7）、`.vscode/tasks.json` の `runOn`（§7） | `edit_json` | campaign があれば CL-IR | CL-IR / CL-REVIEW |
@@ -83,7 +84,7 @@ bin/zet verify-log
 | I-10 | errors[] のモジュールの finding は held にする（GER に渡さない）。held は errors[] のモジュールにだけ使える |
 | I-11 | strict スキーマ（未知フィールド・重複キー・64 段を超える入れ子（GER と同じ上限）・不正な時刻・有限でない数値・不正なサロゲートを拒否）。plan_hash を持つ plan は check / finalize でも plan_hash を検証 |
 | I-12 | 入力が partial なら plan も partial で、errors[] のモジュールをモジュール単位で held にする |
-| I-13 | 自動修復には、その finding の必須の後続チェックリスト（`action.followup`。マルウェアの痕跡なら CL-IR と CL-SECRET、LaunchAgent なら CL-LAUNCHD、ブラウザ拡張なら CL-EXT など）が付いていること。チェックリスト（と後続作業）は ZET の雛形の手順を変えずにすべて含むこと（手順を足すのはよい）。findings 1.1 では、finding の `kind` に許された操作であること |
+| I-13 | 自動修復には、その finding の必須の後続チェックリスト（`action.followup`。マルウェアの痕跡なら CL-IR と CL-SECRET、LaunchAgent なら CL-LAUNCHD、ブラウザ拡張なら CL-EXT など）が付いていること。チェックリスト（と後続作業）は ZET の雛形の手順を変えずにすべて含むこと（手順を足すのはよい）。findings 1.1 では、finding の `kind` に許された操作であること。ロックファイルの finding（`pkg.lockfile_compromised`、または §15 のロックファイル）の remediate はチェックリスト（npm は CL-LOCKFILE、それ以外は CL-PKG）だけ（インストール済みの実体を隔離してもロックファイルの finding は消えないため） |
 
 ## スキーマ
 

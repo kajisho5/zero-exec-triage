@@ -28,7 +28,8 @@ ZET does not look at the file system. With ZES findings 1.0 it works from `modul
 | Malicious files, payloads, `.pth` hooks, IoC files (§2 §15 §18 §20 §30 §40), SymJack links (§17) | `quarantine` self | CL-IR (and CL-SECRET) | CL-IR |
 | `node_modules/<name>/package.json` of a compromised package (§15) | `quarantine` `npm_pkg_dir` | CL-PKG, CL-IR, CL-SECRET | CL-PKG |
 | Compromised `*.dist-info` (§15 CRITICAL) | `quarantine` `pypi_record` (GER refuses it when there is no RECORD) | CL-PKG, CL-SECRET | CL-VENV |
-| Lock files and requirements (§15), `*.egg-info`, vulnerable versions | — | — | CL-PKG / CL-VENV |
+| npm lock files (§15, `pkg.lockfile_compromised`), even with `related: npm_installed`: the installed copy is quarantined through its own `node_modules/<name>/package.json` finding, and the lock file finding stays open until an operator regenerates the lock file | — | — | CL-LOCKFILE |
+| Other lock files and requirements (§15), `*.egg-info`, vulnerable versions | — | — | CL-PKG / CL-VENV |
 | Dangerous MCP server in `.mcp.json`, `mcp.json`, `.codex/config.toml` (§17 HIGH) | `disable_mcp_server` | CL-MCP (+ CL-IR) | CL-MCP |
 | `npx` / `uvx` MCP server (§17 MEDIUM) | — | — | CL-MCP-PIN |
 | `package.json` lifecycle script (§2 / §15), `.claude/settings.json` hooks (§7), `.vscode/tasks.json` `runOn` (§7) | `edit_json` | CL-IR when it is a campaign | CL-IR / CL-REVIEW |
@@ -85,7 +86,7 @@ See [SKILL.md](SKILL.md) for the detailed procedure and how to write decisions, 
 | I-10 | Findings from modules listed in errors[] go to held (they are not passed to GER). held may be used only for modules in errors[] |
 | I-11 | Strict schema (rejects unknown fields, duplicate keys, nesting deeper than GER's 64-level limit, invalid timestamps, non-finite numbers and invalid surrogates). For a plan that carries plan_hash, check / finalize also verify plan_hash |
 | I-12 | If the input is partial, the plan is partial too, and modules in errors[] are held module by module |
-| I-13 | Every automatic fix carries the mandatory follow-up checklists for its finding (`action.followup`, for example CL-IR and CL-SECRET for a malware indicator, CL-LAUNCHD for a LaunchAgent, CL-EXT for a browser extension); every checklist (and follow-up) contains all steps of its ZET template unchanged (steps may be added); with findings 1.1, the action type must be allowed for the finding's `kind` |
+| I-13 | Every automatic fix carries the mandatory follow-up checklists for its finding (`action.followup`, for example CL-IR and CL-SECRET for a malware indicator, CL-LAUNCHD for a LaunchAgent, CL-EXT for a browser extension); every checklist (and follow-up) contains all steps of its ZET template unchanged (steps may be added); with findings 1.1, the action type must be allowed for the finding's `kind`; a lock file finding (`pkg.lockfile_compromised`, or §15 on a lock file) is remediated only by a checklist (CL-LOCKFILE for npm, CL-PKG otherwise), because quarantining the installed package does not make the lock file finding go away |
 
 ## Schemas
 

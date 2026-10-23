@@ -110,7 +110,7 @@ A-7〜A-9 はいずれも任意のフィールドで、従来の plan はその�
 | I-10 | `held` の finding は `items` に入らない（修復層へ渡さない） | 契約 §4 |
 | I-11 | タイムスタンプはすべて RFC 3339 UTC（`Z`）、未知フィールドなし | 共通契約 |
 | I-12 | 入力が `partial` なら plan も `partial` かつ `held` 非空 | 失敗の伝播 |
-| I-13 | 自動修復の `action.followup` に、finding から決まる必須の後続作業（§9.3）がある。checklist と followup は ZET の雛形の手順をすべて変えずに含む。findings 1.1 では `kind` に許された操作だけ | 自動修復はインシデントの終わりではない |
+| I-13 | 自動修復の `action.followup` に、finding から決まる必須の後続作業（§9.3）がある。checklist と followup は ZET の雛形の手順をすべて変えずに含む。findings 1.1 では `kind` に許された操作だけ。ロックファイルの finding（§9.6）は checklist（再生成の手順を含む雛形）だけ | 自動修復はインシデントの終わりではない。自動で消えない finding を自動修復と数えない |
 
 0.2 で I-4 を広げた: `target` は `action.relation`（§9.2）で finding の `path` と結びつけばよい。`relation: none`（target null）は checklist だけ。確定した action の params は GER の `actions.schema.json`（vendor）に合うこと。ファイルを変える item が同じ対象を持てるのは同じ `group` のときだけ。chmod 以外のファイルを変える操作には入力から導いた `plan.scope` が必要で、対象はその下。root が必要な対象（`/etc` など）は承認者 2 名（I-6）。
 
@@ -223,10 +223,21 @@ class Constraints: allowed: frozenset[Decision]; min_approvers: int; level_effec
 ### 9.3 対応表と必須の後続作業（`zet/remedy.py`）
 findings 1.0 では `module`・`path`（basename とディレクトリの形）・`level`・`campaign` だけで判断する（`detail` は解析しない。設計 0.2 Q-1 のとおり壊れやすく安全でないため）。主な対応は README の表を参照。同じ対象への auto は group にまとめ、他の finding の **quarantine** が同じ対象（同じファイル、スキルのディレクトリ、拡張機能のディレクトリ、node_modules のパッケージ）を扱う finding には同じ group の quarantine を提案する（編集は他の finding を消さないのでまとめない）。
 
-必須の後続作業は、提案と同じ操作（type と target）を採用した場合は提案の `followup`、それ以外の自動修復では、campaign のある finding・マルウェアの痕跡のモジュール（§2 §15 §18 §20 §24 §30 §31 §40 §42）なら CL-IR。chmod と checklist には求めない。雛形（CL-PKG・CL-VENV・CL-SECRET・CL-IR・CL-LAUNCHD・CL-SYSTEMD・CL-CRON・CL-EXT・CL-MCP・CL-MCP-PIN・CL-SHELL・CL-LDSO・CL-PHP・CL-PHP-RESTART・CL-UPGRADE・CL-PWN・CL-PIN・CL-SKILL・CL-ENV・CL-REVIEW）は閉じた表で、`{path}` だけを finding の path に置き換える。
+必須の後続作業は、提案と同じ操作（type と target）を採用した場合は提案の `followup`、それ以外の自動修復では、campaign のある finding・マルウェアの痕跡のモジュール（§2 §15 §18 §20 §24 §30 §31 §40 §42）なら CL-IR。chmod と checklist には求めない。雛形（CL-PKG・CL-LOCKFILE・CL-VENV・CL-SECRET・CL-IR・CL-LAUNCHD・CL-SYSTEMD・CL-CRON・CL-EXT・CL-MCP・CL-MCP-PIN・CL-SHELL・CL-LDSO・CL-PHP・CL-PHP-RESTART・CL-UPGRADE・CL-PWN・CL-PIN・CL-SKILL・CL-ENV・CL-REVIEW）は閉じた表で、`{path}` を finding の path、`{pkg}` を findings 1.1 の `subject.package`（無ければ `<name>`）に置き換える。
 
 ### 9.4 findings 1.1
 ZES 0.4.0 は findings 1.1 を出す。ZET は `schema_version: "1.1"` の findings を `schemas/vendor/findings-1.1.schema.json`（ZES の `schemas/findings.schema.json` の写し。VENDOR.json に版固定）で検証し、任意の `kind` / `subject` / `locators` / `related` / `evidence` / `scan_roots` を使う。1.0 の findings（ZES 0.3.x）も引き続き `schemas/vendor/findings.schema.json` で受け付け、1.0 の findings に 1.1 の項目があれば strict のため拒否する。
+
+### 9.6 ロックファイルの finding（I-13）
+ロックファイルの finding（findings 1.1 の `kind: pkg.lockfile_compromised`、または §15 でファイル名がロックファイル〔package-lock.json・npm-shrinkwrap.json・yarn.lock・pnpm-lock.yaml・bun.lock・Gemfile.lock・Cargo.lock・composer.lock・go.sum・poetry.lock・Pipfile.lock・uv.lock・deno.lock〕）は、自動修復で消えない。ZES はロックファイルの中身を見て報告するため、隣の `node_modules/<name>`（`related: npm_installed`）を隔離しても再スキャンで同じ finding が出る。ロックファイルを直す（依存を取り除く・安全版に固定して再生成する）のは作業者かパッケージマネージャーで、GER は書き換えない。
+
+- draft はロックファイルの finding に auto を提案しない。提案は checklist だけで、npm のロックファイルは CL-LOCKFILE（「依存を取り除いてから〔`npm uninstall <pkg>`〕、または安全版に固定してからロックファイルを再生成する」を必須の手順に含む）、それ以外は CL-PKG。`verify` を付けないため、GER は自動で完了にせず、作業者の `ger confirm`（self_attested）だけが完了にする
+- インストール済みの実体の隔離（自動の部分）は、ZES が別に報告する `node_modules/<name>/package.json` の finding（`pkg.compromised`）の `quarantine npm_pkg_dir` が行う。ZES はインストール済みの版が侵害版のときだけその finding を出すため、ロックファイルだけの finding（実体の版は侵害版でない）では隔離を提案しない（CL-LOCKFILE の `npm uninstall` と `npm ls` で扱う）
+- ロックファイルの finding を他の finding の隔離の group に入れない（同じ group にすると、隔離で消える finding として数えられる）
+- I-13: ロックファイルの finding の remediate は checklist だけで、雛形は上の CL-LOCKFILE / CL-PKG（手順は変えずにすべて含む）。quarantine（`npm_installed`）などは確定させない。`kind: pkg.lockfile_compromised` に許す操作も checklist だけ
+- 関係 `npm_installed` は I-4 と GER（G-9）に残す（ZET の提案には使わない。判断者が使っても I-13 で確定しない）
+
+これにより、E2E の「apply 後に残る finding = checklist・defer・exception・held の item」がロックファイルの finding にも成り立つ（lockfile-installed のフィクスチャ: 隔離 1・checklist 2・defer 1、apply 後に 3 件）。
 
 ### 9.5 流れ
 `zet draft` → 判断者が提案を採用 → `ger preview`（GER が現在のファイルから params を埋める。拒否は checklist に切り替える）→ `zet check` / `finalize` → 承認 → GER。
