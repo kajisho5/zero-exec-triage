@@ -157,7 +157,7 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
     pol = inp["policy"]
     by_id = {x["id"]: x for x in f["findings"]}
     errmods = errored_modules(f)
-    approvers = set(pol["approvers"])
+    approvers = {a.casefold() for a in pol["approvers"]}  # 人名は ASCII。大文字小文字の違いで別人扱いしない
     now = now or dt.datetime.now(dt.timezone.utc)
     v = _timestamp_violations(plan)
     if v:
@@ -230,7 +230,7 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
             v.append(Violation("I-5", "skillpact.divergence が非空の finding は exception にできません", fid))
         if not it["decided_by"] or not it["decided_at"]:
             v.append(Violation("I-3", "decided_by と decided_at は必須です", fid))
-        appr = sorted(set(it["approved_by"]))
+        appr = sorted({a.casefold() for a in it["approved_by"]})
         if len(appr) != len(it["approved_by"]):
             v.append(Violation("I-6", "approved_by に重複があります", fid))
         unknown = [a for a in appr if a not in approvers]
@@ -240,7 +240,7 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
         if len(appr) < need:
             code = "I-6" if x.get("skillpact") and x["skillpact"]["diff_anomaly"] else "I-3"
             v.append(Violation(code, f"承認者が {need} 名以上必要です（現在 {len(appr)} 名）", fid))
-        if it["decided_by"] and it["decided_by"] in appr:
+        if it["decided_by"] and it["decided_by"].casefold() in appr:
             v.append(Violation("I-3", "判断者本人が承認者に含まれています（自己承認）", fid))
         if d == "exception":
             if it["exception_type"] is None:

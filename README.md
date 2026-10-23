@@ -44,12 +44,12 @@ bin/zet finalize triage-input.json plan.draft.json --operator alice -o remediati
 |---|---|
 | I-1 | 入力の全 finding が items か held にちょうど 1 回現れ、items の decision は記入済み |
 | I-2 | 入力に存在しない finding_id を使わない |
-| I-3 | exception は exception_type・reason・recheck_at と判断者以外の承認が必要。decided_by / decided_at は必須 |
+| I-3 | exception は exception_type・reason・recheck_at と判断者以外の承認が必要（人名は大文字小文字を区別せず比較）。decided_by / decided_at は必須 |
 | I-4 | remediate は owner・due_at・action が必要。action.reversible / skillpact_effects は導出値と一致 |
 | I-5 | skillpact.divergence が空でない finding は exception にできない |
-| I-6 | skillpact.diff_anomaly の finding は承認者 2 名以上（重複は数えない） |
+| I-6 | skillpact.diff_anomaly の finding は承認者 2 名以上（重複・大文字小文字だけの違いは 1 名と数える） |
 | I-7 | L3 署名済みで乖離がある finding は level_effective = CRITICAL（引き下げ不可） |
-| I-8 | 承認者は policy.approvers の中から |
+| I-8 | 承認者は policy.approvers の中から（大文字小文字を区別しない） |
 | I-9 | due_at は判断日 + deadlines[level_effective] 日以内、recheck_at（exception/defer）は判断ウィンドウ内。判断日（decided_at）は created_at 以上・実行時刻以下 |
 | I-10 | errors[] のモジュールの finding は held にする（GER に渡さない）。held は errors[] のモジュールにだけ使える |
 | I-11 | strict スキーマ（未知フィールド・重複キー・深すぎる入れ子・不正な時刻・有限でない数値・不正なサロゲートを拒否）。plan_hash を持つ plan は check / finalize でも plan_hash を検証 |

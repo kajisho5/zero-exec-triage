@@ -550,6 +550,20 @@ class TestRegressionsR2(unittest.TestCase):
         self.assertEqual((it["decision"], it["decided_by"], it["reason"]), (None, None, None))
         self.assertEqual(it["due_at"], "2026-10-29T10:00:00Z")
 
+    # 5. 人名の比較は大文字小文字を区別しない（自己承認・承認者数・policy.approvers）
+    def test_person_names_compared_casefolded(self):
+        by_id = {x["id"]: x for x in self.inp["findings"]["findings"]}
+        sp = {i["finding_id"]: by_id[i["finding_id"]]["skillpact"] for i in self.plan["items"]}
+        it = next(i for i in self.plan["items"] if not sp[i["finding_id"]]["divergence"] and not sp[i["finding_id"]]["diff_anomaly"])
+        it.update(decision="exception", action=None, exception_type="risk_accepted", reason="mitigated", decided_by="Alice", approved_by=["alice"])
+        self.assertIn("I-3", codes(triage.check(self.inp, self.plan)))  # 自己承認
+        it.update(decided_by="bob", approved_by=["Security-Lead"])
+        self.assertEqual(triage.check(self.inp, self.plan), [])  # policy.approvers の security-lead と同一人物
+        an = next(i for i in self.plan["items"] if sp[i["finding_id"]]["diff_anomaly"])
+        an["approved_by"] = ["alice", "ALICE"]
+        v = [x for x in triage.check(self.inp, self.plan) if x.finding_id == an["finding_id"]]
+        self.assertIn("承認者が 2 名以上必要です（現在 1 名）", [x.message for x in v])
+
 
 if __name__ == "__main__":
     unittest.main()
