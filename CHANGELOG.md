@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Round 6 fixes
+
+- **A `{pkg}` inside a path was rewritten in step texts.** The templates were filled with `replace("{path}", path).replace("{pkg}", pkg)`, so a scanned path such as `root/{pkg}/.mcp.json` became `root/<name>/.mcp.json` (or the package name of a finding with `subject.package`) in the CL-IR / CL-REVIEW / CL-MCP steps: the operator's checklist named a path that does not exist, or another one. The long-path branch already filled the template in one pass, so the two branches also disagreed. Filling is now a single pass over the template's placeholders in both branches (a placeholder inside a substituted value stays literal), and I-13 rebuilds the text with the same function. A plan made by an earlier ZET for such a path (with the rewritten text) no longer matches its template and is reported by I-13.
+
+### 日本語（round 6 の修正）
+
+- **パスに含まれる `{pkg}` が手順の文で書き換えられていた。** 雛形を `replace("{path}", path).replace("{pkg}", pkg)` で埋めていたため、`root/{pkg}/.mcp.json` のようなスキャン対象のパスが CL-IR / CL-REVIEW / CL-MCP の手順で `root/<name>/.mcp.json`（`subject.package` のある finding ではそのパッケージ名）になり、チェックリストが存在しないパスや別のパスを示していた。長いパスの分岐はもともと 1 回で埋めていたため、2 つの分岐の結果も食い違っていた。どちらの分岐も雛形の置き換え箇所を 1 回の走査で埋めるようにし（置き換えた値の中の置き換え記号はそのまま残る）、I-13 も同じ関数で文を組み立て直す。以前の ZET がこのようなパスで作った計画（書き換わった文）は雛形と一致しなくなり、I-13 で報告される
+
 ### Round 5 fixes
 
 - **Plans that GER always rejects were finalized when a path was long.** Templates such as CL-IR put the finding's path into a step text, and GER accepts step texts of 1 to 2000 characters (G-1 rejects the whole plan). ZET checked checklist `params` against GER's `actions.schema.json` but not `followup`, so a `.mcp.json` at a 2014-character path (legal: PATH_MAX is 4096) gave a CL-IR step of 2147 characters that passed `zet check` and `finalize`; for a checklist with `{path}` (for example CL-PIN for a `§22` finding) the draft's own suggestion failed ZET's own check. Now a filled-in step that would exceed 2000 characters keeps only the end of each value (the file name) behind `…`, so the step fits; the rule is fixed, so I-13 still compares the whole text with the template. I-4 checks every `followup` with GER's checklist step rules, in drafts too.

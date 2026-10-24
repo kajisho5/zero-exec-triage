@@ -555,5 +555,39 @@ class TestPlanHashUnchanged(unittest.TestCase):
         self.assertEqual(plan_hash(p), plan_hash(dict(p, plan_hash="sha256:" + "0" * 64)))
 
 
+
+class TestRound6(unittest.TestCase):
+    """F6: template substitution is a single pass, so a placeholder inside a substituted value stays literal."""
+
+    def test_placeholder_inside_the_path_stays_literal(self):
+        p = R + "/{pkg}/.mcp.json"
+        for pkg in (None, "lodash"):
+            text = remedy.checklist("CL-REVIEW", p, pkg)["steps"][0]["text"]
+            self.assertTrue(text.endswith("Target: " + p), text)
+            self.assertTrue(remedy.template_ok(remedy.checklist("CL-REVIEW", p, pkg), p, pkg))
+            # The text an older ZET wrote (the placeholder replaced inside the path) names another path: I-13
+            wrong = remedy.checklist("CL-REVIEW", R + "/" + (pkg or "<name>") + "/.mcp.json", pkg)
+            self.assertFalse(remedy.template_ok(wrong, p, pkg))
+        text = remedy.checklist("CL-LOCKFILE", "/r/{path}", "a{path}b")["steps"]
+        self.assertTrue(any("npm ls a{path}b" in st["text"] for st in text), text)
+        # The long-path branch keeps the same rule
+        long_p = R + "/" + "/".join(["d" * 240] * 8) + "/{pkg}/.mcp.json"
+        t = remedy.checklist("CL-REVIEW", long_p, "x")["steps"][0]["text"]
+        self.assertEqual(len(t), remedy.MAX_STEP_TEXT)
+        self.assertTrue(t.endswith("/{pkg}/.mcp.json"), t[-40:])
+
+    def test_chain_with_a_placeholder_in_the_path(self):
+        p = R + "/{pkg}/.mcp.json"
+        mcp = F("§17", "HIGH", p, "mcp-poisoning", kind="mcp.dangerous_command")
+        inp = make_input([mcp], version="1.1")
+        d = triage.draft(inp, NOW, "alice")
+        pl = adopt(d)
+        texts = [st["text"] for it in pl["items"] for cl in ([it["action"]["params"]] if it["action"]["type"] == "checklist"
+                 else []) + it["action"].get("followup", []) for st in cl["steps"]]
+        self.assertTrue(any(t.endswith("Target: " + p) for t in texts), texts)
+        self.assertFalse(any("<name>" in t for t in texts), texts)
+        self.assertEqual(triage.check(inp, pl, now=NOW), [])
+
+
 if __name__ == "__main__":
     unittest.main()

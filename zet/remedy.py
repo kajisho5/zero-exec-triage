@@ -133,14 +133,16 @@ _PLACEHOLDER = re.compile(r"\{path\}|\{pkg\}")
 
 
 def _fill(t: str, path: str, pkg: str) -> str:
-    text = t.replace("{path}", path).replace("{pkg}", pkg)
+    # One pass over the template: a "{pkg}" or "{path}" inside a substituted value (a path from the scanned tree can
+    #   hold one) stays literal. I-13 rebuilds the text with this same function
+    vals = {"{path}": path, "{pkg}": pkg}
+    text = _PLACEHOLDER.sub(lambda m: vals[m.group()], t)
     n = len(_PLACEHOLDER.findall(t))
     if len(text) <= MAX_STEP_TEXT or not n:
         return text
     # A path (legal up to PATH_MAX) or package name too long for GER's limit: each value keeps its end (the file name)
     #   behind "…" so that the step fits. The rule is fixed, so I-13 still compares the whole text with the template
     room = (MAX_STEP_TEXT - len(_PLACEHOLDER.sub("", t))) // n
-    vals = {"{path}": path, "{pkg}": pkg}
     short = {k: v if len(v) <= room else "…" + v[len(v) - room + 1:] for k, v in vals.items()}
     return _PLACEHOLDER.sub(lambda m: short[m.group()], t)
 
