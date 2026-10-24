@@ -117,7 +117,9 @@ class TestSuggestions(unittest.TestCase):
             (F("§31", "HIGH", H + "/.bashrc", "ebpf-rootkit"), ("remove_line", "self", H + "/.bashrc"), {"CL-SHELL", "CL-IR"}, "CL-IR"),
             (F("§4", "HIGH", R + "/php.ini"), ("remove_line", "self", R + "/php.ini"), {"CL-PHP-RESTART"}, "CL-PHP-RESTART"),
             (F("§4", "CRITICAL", R + "/Dockerfile"), None, set(), "CL-PHP"),
-            (F("§7", "HIGH", R + "/.claude/settings.json", "actions-cool"), ("edit_json", "self", R + "/.claude/settings.json"), {"CL-IR"}, None),
+            (F("§7", "HIGH", R + "/.claude/settings.json", "actions-cool", locators=[{"format": "json", "pointer": "/hooks/SessionStart/0"}]),
+             ("edit_json", "self", R + "/.claude/settings.json"), {"CL-IR"}, None),
+            (F("§7", "HIGH", R + "/.claude/settings.json", "actions-cool"), None, set(), "CL-IR"),  # no hook named (round 7 F4)
             (F("§18", "CRITICAL", H + "/.zsh_history"), None, set(), "CL-IR"),
             (F("§21", "CRITICAL", R + "/.github/workflows/x.yml", "ghostaction-oct2026"), None, set(), "CL-PWN"),
             (F("§22", "HIGH", R + "/.github/workflows/x.yml", "ghostaction-oct2026"), None, set(), "CL-PIN"),
@@ -587,6 +589,76 @@ class TestRound6(unittest.TestCase):
         self.assertTrue(any(t.endswith("Target: " + p) for t in texts), texts)
         self.assertFalse(any("<name>" in t for t in texts), texts)
         self.assertEqual(triage.check(inp, pl, now=NOW), [])
+
+
+class TestRound7(unittest.TestCase):
+    """F4: a §7 campaign string in .claude/settings.json that names no hook is a checklist, and edit actions carry the
+    finding's locators so GER can refuse an edit that does not remove what the finding reports."""
+
+    def findings(self):
+        p = R + "/.claude/settings.json"
+        hook = F("§7", "HIGH", p, "redhat-miasma-oidc-jun2026", code="intel.campaign_string",
+                 params={"campaign": "redhat-miasma-oidc-jun2026"}, locators=[{"format": "json", "pointer": "/hooks/SessionStart/0"}])
+        env = F("§7", "HIGH", p, "azure-durabletask-miasma-jun2026", code="intel.campaign_string",
+                params={"campaign": "azure-durabletask-miasma-jun2026"})
+        return hook, env
+
+    def test_suggestions(self):
+        hook, env = self.findings()
+        sug, note = remedy.classify(env)
+        self.assertEqual([s["label"] for s in sug], ["checklist"])
+        self.assertEqual(sug[0]["action"]["params"]["template"], "CL-IR")
+        self.assertIn("not in a hook", note)
+        sug, _ = remedy.classify(hook)
+        a = sug[0]["action"]
+        self.assertEqual((sug[0]["label"], a["type"], a["params"], a["locators"]),
+                         ("auto", "edit_json", {"select": "claude.hook"}, ["/hooks/SessionStart/0"]))
+        # Text locators (line numbers) and repeats are not pointers; checklists and quarantines carry none
+        x = F("§17", "HIGH", R + "/.mcp.json", "mcp-poisoning", locators=[
+            {"format": "json", "pointer": "/mcpServers/a"}, {"format": "json", "pointer": "/mcpServers/a"},
+            {"format": "text", "line": 3, "line_sha256": SHA}, {"format": "jsonc", "pointer": "/mcpServers/b~1c"}])
+        self.assertEqual(remedy.pointer_locators(x), ["/mcpServers/a", "/mcpServers/b~1c"])
+        sug, _ = remedy.classify(x)
+        self.assertEqual(sug[0]["action"]["locators"], ["/mcpServers/a", "/mcpServers/b~1c"])
+        self.assertNotIn("locators", sug[-1]["action"])
+
+    def test_draft_finalize_and_check(self):
+        hook, env = self.findings()
+        inp = make_input([hook, env], version="1.2")
+        self.assertEqual(triage.validate_input(inp), [])
+        d = triage.draft(inp, NOW, "alice")
+        p = adopt(d)
+        by = {it["finding_id"]: it for it in p["items"]}
+        self.assertEqual(by[env["id"]]["action"]["type"], "checklist")
+        self.assertEqual(by[hook["id"]]["action"]["type"], "edit_json")
+        self.assertEqual(triage.check(inp, p, now=NOW), [])
+        final = triage.finalize(inp, p, now=NOW)
+        fb = {it["finding_id"]: it for it in final["items"]}
+        self.assertEqual(fb[hook["id"]]["action"]["locators"], ["/hooks/SessionStart/0"])
+        self.assertNotIn("locators", fb[env["id"]]["action"])
+        # finalize sets the locators from the finding even when the decided action has none
+        q = copy.deepcopy(p)
+        next(it for it in q["items"] if it["finding_id"] == hook["id"])["action"].pop("locators")
+        self.assertEqual(triage.finalize(inp, q, now=NOW)["items"], final["items"])
+        # I-13: an automatic edit for the string that is in no hook (the round 7 F4 plan) is refused
+        q = copy.deepcopy(p)
+        it = next(it for it in q["items"] if it["finding_id"] == env["id"])
+        it["action"] = copy.deepcopy(by[hook["id"]]["action"])
+        it["action"].pop("locators")
+        it["approved_by"] = ["sec-a"]
+        v = triage.check(inp, q, now=NOW)
+        self.assertIn("I-13", codes(v), v)
+        self.assertTrue(any("only a checklist (CL-IR)" in x.message for x in v), v)
+        # I-4: locators that are not the finding's, or on an operation that has none
+        for mut in (lambda a: a.update(locators=["/hooks/SessionStart/1"]),
+                    lambda a: a.update(locators=["/hooks/SessionStart/0", "/env"])):
+            q = copy.deepcopy(p)
+            mut(next(it for it in q["items"] if it["finding_id"] == hook["id"])["action"])
+            v = triage.check(inp, q, now=NOW)
+            self.assertIn("I-4", codes(v), v)
+        q = copy.deepcopy(p)
+        next(it for it in q["items"] if it["finding_id"] == env["id"])["action"]["locators"] = ["/env/A"]
+        self.assertIn("I-4", codes(triage.check(inp, q, now=NOW)))
 
 
 if __name__ == "__main__":

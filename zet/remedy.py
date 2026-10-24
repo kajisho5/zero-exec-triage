@@ -307,6 +307,31 @@ def _ir(f):
     return ("CL-IR",) if f.get("campaign") or f["module"] in MALWARE_MODULES else ()
 
 
+# Operations that remove parts of a structured file (JSON pointers / TOML key paths). Their actions carry the finding's
+#   locators (action.locators), so GER can tell whether the removal is what the finding reports (round 7 F4)
+LOCATOR_TYPES = ("edit_json", "edit_toml", "disable_mcp_server")
+
+
+def pointer_locators(f: dict) -> list[str]:
+    """The JSON pointers of the finding's locators (findings 1.1+, formats json / jsonc / toml), in order, without
+    repeats. Text locators (line numbers) are not included."""
+    out: list[str] = []
+    for loc in f.get("locators") or []:
+        if isinstance(loc, dict) and loc.get("format") in ("json", "jsonc", "toml") and isinstance(loc.get("pointer"), str) \
+                and loc["pointer"] not in out:
+            out.append(loc["pointer"])
+    return out
+
+
+def campaign_without_hook(f: dict) -> bool:
+    """A §7 finding (a campaign string) in .claude/settings(.local).json that names no hook: ZES puts the hook entries
+    that hold the string into locators, so without one the string is somewhere else in the file (env, permissions, a
+    comment ...), which no hook removal clears. Planned as a checklist (CL-IR); I-13 refuses an automatic edit for it."""
+    p = f.get("path")
+    return (f["module"] == "§7" and isinstance(p, str) and _b(p) in ("settings.json", "settings.local.json")
+            and _b(posixpath.dirname(p)) == ".claude" and not pointer_locators(f))
+
+
 def classify(f: dict) -> tuple[list[dict], str | None]:
     """(list of suggestions [{label, action, note?}], note). The first auto is the default candidate."""
     p, m, lv, camp = f["path"], f["module"], f["level"], f.get("campaign")
@@ -403,7 +428,14 @@ def classify(f: dict) -> tuple[list[dict], str | None]:
         cl = "CL-IR"
     elif m == "§7":
         if b in ("settings.json", "settings.local.json") and _b(posixpath.dirname(p)) == ".claude":
-            autos.append(_act("edit_json", p, "self", p, {"select": "claude.hook"}, _ir(f)))
+            if campaign_without_hook(f):
+                # GER's claude.hook removes the hooks ZES reports for the whole file; with none named by this finding,
+                #   the removal would be another finding's, and this one would be reported as applied while its string stays
+                cl = "CL-IR"
+                note = ("the campaign string is not in a hook (ZES names no hook entry), so no hook removal clears it; "
+                        "remove it by hand with the checklist")
+            else:
+                autos.append(_act("edit_json", p, "self", p, {"select": "claude.hook"}, _ir(f)))
         elif b == "tasks.json" and _b(posixpath.dirname(p)) == ".vscode":
             autos.append(_act("edit_json", p, "self", p, {"select": "vscode.task_run_on"}))
         elif "/.git/hooks/" in p:
@@ -427,6 +459,10 @@ def classify(f: dict) -> tuple[list[dict], str | None]:
         cl = "CL-PIN"
     elif m in ("§3", "§5", "§6", "§16", "§37", "§41"):
         cl = "CL-UPGRADE"
+    locs = pointer_locators(f)
+    for a in autos:
+        if a["type"] in LOCATOR_TYPES and locs:
+            a["locators"] = list(locs)
     out = [{"label": "auto", "action": a} for a in autos]
     if cl:
         out.append({"label": "checklist", "action": _cl(cl, f)})

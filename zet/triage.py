@@ -224,6 +224,10 @@ def _action_shape_violations(a: dict, fid: str, finding: dict, sug: list | None 
     missing = sorted(need - {fu.get("template") for fu in fus})
     if missing:
         v.append(Violation("I-13", f"automatic remediation requires the follow-up work {', '.join(missing)} (action.followup)", fid))
+    if remedy.campaign_without_hook(finding) and a["type"] != "checklist":
+        # The hook removal of GER (claude.hook) cannot clear a campaign string that is not in a hook (round 7 F4)
+        v.append(Violation("I-13", "a §7 campaign string in .claude/settings.json that is in no hook (no locator) can only be "
+                                   "removed by hand: only a checklist (CL-IR) is allowed", fid))
     if remedy.is_lockfile_finding(finding):
         # §9.6: automatic remediation does not clear a lockfile finding (ZES reports it again after the installed copy is
         # quarantined). Checklist only, with the template that contains the regeneration steps. The operator completes it (ger confirm)
@@ -505,6 +509,9 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
                 v.append(Violation("I-4", "action.evidence_hash must equal the finding's evidence_hash", fid))
             if "evidence" in a and a["evidence"] != evidence_of(x):
                 v.append(Violation("I-4", "action.evidence must match the finding's evidence (evidence_hash in 1.0)", fid))
+            if "locators" in a and (a["type"] not in remedy.LOCATOR_TYPES or a["locators"] != remedy.pointer_locators(x)):
+                v.append(Violation("I-4", "action.locators must be the JSON pointers of the finding's locators (only for "
+                                          f"{' / '.join(remedy.LOCATOR_TYPES)})", fid))
             v11 = plan["schema_version"] == PLAN_SCHEMA_VERSION
             if final and v11 and ("evidence" not in a or "relation" not in a or "finding_path" not in a):
                 v.append(Violation("I-4", "an action of a finalized plan requires evidence, relation and finding_path", fid))
@@ -583,6 +590,12 @@ def finalize(inp: dict, plan: dict, now: dt.datetime | None = None, now_override
             a["finding_path"] = x["path"]
             a["evidence"] = evidence_of(x)
             a.pop("evidence_hash", None)
+            # GER refuses an edit that does not remove what the finding names (round 7 F4); it needs the locators for that
+            locs = remedy.pointer_locators(x)
+            if a["type"] in remedy.LOCATOR_TYPES and locs:
+                a["locators"] = locs
+            else:
+                a.pop("locators", None)
             it["action"] = a
         sp = skillpact_summary(x)
         if sp is not None:
