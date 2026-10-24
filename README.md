@@ -33,7 +33,7 @@ ZET does not look at the file system. With ZES findings 1.0 it works from `modul
 | Dangerous MCP server in `.mcp.json`, `mcp.json`, `.codex/config.toml` (§17 HIGH) | `disable_mcp_server` | CL-MCP (+ CL-IR) | CL-MCP |
 | `npx` / `uvx` MCP server (§17 MEDIUM) | — | — | CL-MCP-PIN |
 | MCP server under `mcpServers` of `.claude/settings.json` (§17 `mcp.dangerous_command` / `mcp.unpinned`): GER has no hazard table entry for it, and an edit would remove an unrelated hook | — | — | CL-REVIEW / CL-MCP-PIN |
-| `package.json` lifecycle script (§2 / §15), `.claude/settings.json` hooks (§7), `.vscode/tasks.json` `runOn` (§7) | `edit_json` | CL-IR when it is a campaign | CL-IR / CL-REVIEW |
+| `package.json` lifecycle script (§2 / §15), `.claude/settings.json` hooks (§7; a campaign string that ZES finds in no hook gets the CL-IR checklist only), `.vscode/tasks.json` `runOn` (§7) | `edit_json` | CL-IR when it is a campaign | CL-IR / CL-REVIEW |
 | `ld.so.preload`, shell rc lines (§31 §10), php.ini `auto_prepend_file` (§4), git config / `.envrc` (§26) | `remove_line` | CL-LDSO / CL-SHELL / CL-PHP-RESTART (+ CL-IR) | CL-IR / CL-PHP-RESTART |
 | LaunchAgents / LaunchDaemons plist (§30), systemd units | `quarantine` self | CL-LAUNCHD / CL-SYSTEMD, CL-IR | CL-IR |
 | Browser extension manifest (§24 §42) | `quarantine` `ext_dir` | CL-EXT, CL-IR | CL-EXT |

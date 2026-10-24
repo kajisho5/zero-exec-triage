@@ -218,7 +218,7 @@ class Constraints: allowed: frozenset[Decision]; min_approvers: int; level_effec
 ### 9.1 plan 1.1
 - `schema_version: "1.1"`（ZET 0.2 の出力。1.0 の計画も有効で、GER は 1.0 では chmod だけを実行する）
 - `scope: {roots, home}`: 承認する検査範囲。triage-input の `policy.scope`（findings 1.1 では `scan_roots` を roots に使う）から作る。GER の G-9 は対象がこの下にあることと、隔離ストアが roots の下に無いことを求める
-- `action`: `relation`（§9.2）、`finding_path`（finalize が写す）、`group`、`evidence: {kind, hash}`（finalize が写す。1.1 は finding の `evidence`、1.0 は `evidence_hash` が detail の SHA-256 と一致すれば `detail`、そうでなければ `file`）、`followup`（チェックリストの配列）。`target` は checklist だけ null にできる。`evidence_hash` は 1.0 の互換用
+- `action`: `relation`（§9.2）、`finding_path`（finalize が写す）、`group`、`evidence: {kind, hash}`（finalize が写す。1.1 は finding の `evidence`、1.0 は `evidence_hash` が detail の SHA-256 と一致すれば `detail`、そうでなければ `file`）、`followup`（チェックリストの配列）、`locators`（round 7。edit_json / edit_toml / disable_mcp_server だけ。finding の json / jsonc / toml の locator の JSON ポインタを、順に、重複なく。draft の提案で入れ、finalize でも入れ直す。finding に無ければ無い。I-4 は finding のものであることを確かめる）。`target` は checklist だけ null にできる。`evidence_hash` は 1.0 の互換用
 - `constraints.suggested_actions[]`（draft だけ）: `{label: auto|checklist, action, note?}`
 
 ### 9.2 関係（I-4）
@@ -232,6 +232,10 @@ findings 1.0 では `module`・`path`（basename とディレクトリの形）�
 GER は手順の文を 1〜2000 文字まで受け付け（checklist の params とすべての `followup`）、それ以外は計画全体を拒否する（G-1）。パスは PATH_MAX（4096）まで有効なので、深い階層のパスで手順が長くなりうる。値を入れた手順が 2000 文字を超える場合は、手順の中の置き換え箇所に長さを均等に割り振り、それぞれの値を末尾（ファイル名）だけ残して `…` の後ろに置き、手順がちょうど上限に収まるようにする。決まった規則なので、I-13 は引き続き文全体を雛形と比べる（全長のパスやほかの縮め方は一致しない）。対象のパスそのものは `action.target` にある。I-4 は `ger preview` が埋めない `followup` を、draft でも GER のチェックリストの手順の規則（`actions.schema.json`）で確かめる。
 
 `.claude/settings.json` の `mcpServers` の MCP サーバー（findings 1.1 の `kind: mcp.dangerous_command` / `mcp.unpinned`）には checklist（CL-REVIEW / CL-MCP-PIN）だけを提案する。GER の危険パターンの表にはこのファイルの MCP サーバーの項目が無く（`mcp.server` は `.mcp.json`・`mcp.json`・`mcp_config.json`・`.claude.json`・`claude_desktop_config.json`、`mcp.server.toml` は `.codex/config.toml`）、`edit_json select claude.hook` はサーバーを残したまま無関係なフックを取り除いてしまうため。I-13 は、それ以外のファイルの `mcp.*` の finding に対する `edit_json` / `edit_toml` / `disable_mcp_server` を拒否する。同じファイルのフックの finding（findings 1.1 で `kind` が無い）にはこれまでどおり `edit_json select claude.hook` を提案する。
+
+`.claude/settings(.local).json` の §7 の finding（キャンペーン文字列、`intel.campaign_string`）に `edit_json select claude.hook` を提案するのは、ZES が文字列を含むフックの項目を示すとき（ポインタの locator）だけ。無ければ文字列はファイルのほかの場所（`env`、権限、コメント）にあるので、注記付きのチェックリスト CL-IR を提案する（round 7）。GER の `claude.hook` の選択はファイル全体に対して行うため、同じファイルのほかの finding と同じ group では、編集はその finding のフックを取り除き、この finding は文字列が残ったまま applied と記録されてしまう。findings 1.1 以降では、I-13 がそうした finding の自動の修復を拒否する（チェックリストだけ）。findings 1.0 にはそもそも locator が無いので、無いことは何も示さず、以前の ZET の計画はそのまま通る。二重の守りとして、編集の action は `action.locators` を持ち、GER は編集がそのすべてを取り除かない item を拒否する（GER 設計 §10.2）。ZES は 1 つのファイルの同じキャンペーンの finding を 1 つにまとめ（同じ id）、最初のものの locator を残す。キャンペーンにフックの中の文字列とほかの場所の文字列があると、finding はフックだけを示し、その編集は applied と記録され、再スキャンでまた現れる（ZET からは見えない ZES 側の制約）。
+
+GER が厳密に解析できないファイル（重複したキー、64 段より深い入れ子、`\ud800` のような対になっていないサロゲートのエスケープを含む文字列）は、`ger preview` がその理由で拒否する（ZES やエージェントが読めても、GER はそうしたファイルを編集しない）。ZET はそのために何も変えない。拒否された item は通常の preview の拒否の経路（§9.5）を通り、draft が自動の隣にすでに提案しているチェックリスト（`.claude/settings.json` のフックは CL-REVIEW、MCP サーバーは CL-MCP）として決め直されるので、確定した計画はそのチェックリストを持つ。
 
 ### 9.4 findings 1.1
 ZES 0.4.0 は findings 1.1 を出す。ZET は `schema_version: "1.1"` の findings を `schemas/vendor/findings-1.1.schema.json`（ZES の `schemas/findings.schema.json` の写し。VENDOR.json に版固定）で検証し、任意の `kind` / `subject` / `locators` / `related` / `evidence` / `scan_roots` を使う。1.0 の findings（ZES 0.3.x）も引き続き `schemas/vendor/findings.schema.json` で受け付け、1.0 の findings に 1.1 の項目があれば strict のため拒否する。

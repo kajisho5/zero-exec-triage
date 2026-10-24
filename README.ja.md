@@ -33,7 +33,7 @@ ZET はファイルシステムを見ません。ZES の findings 1.0 では `mo
 | `.mcp.json`・`mcp.json`・`.codex/config.toml` の危険な MCP サーバー（§17 HIGH） | `disable_mcp_server` | CL-MCP（と CL-IR） | CL-MCP |
 | `npx` / `uvx` の MCP サーバー（§17 MEDIUM） | — | — | CL-MCP-PIN |
 | `.claude/settings.json` の `mcpServers` の MCP サーバー（§17 `mcp.dangerous_command` / `mcp.unpinned`）。GER の危険パターンの表に項目が無く、編集すると無関係なフックを取り除いてしまう | — | — | CL-REVIEW / CL-MCP-PIN |
-| `package.json` のライフサイクルスクリプト（§2 / §15）、`.claude/settings.json` の hooks（§7）、`.vscode/tasks.json` の `runOn`（§7） | `edit_json` | campaign があれば CL-IR | CL-IR / CL-REVIEW |
+| `package.json` のライフサイクルスクリプト（§2 / §15）、`.claude/settings.json` の hooks（§7。ZES がどのフックにも見つけないキャンペーン文字列は CL-IR のチェックリストだけ）、`.vscode/tasks.json` の `runOn`（§7） | `edit_json` | campaign があれば CL-IR | CL-IR / CL-REVIEW |
 | `ld.so.preload`、シェルの rc の行（§31 §10）、php.ini の `auto_prepend_file`（§4）、git config・`.envrc`（§26） | `remove_line` | CL-LDSO / CL-SHELL / CL-PHP-RESTART（と CL-IR） | CL-IR / CL-PHP-RESTART |
 | LaunchAgents / LaunchDaemons の plist（§30）、systemd のユニット | `quarantine` self | CL-LAUNCHD / CL-SYSTEMD・CL-IR | CL-IR |
 | ブラウザ拡張の manifest（§24 §42） | `quarantine` `ext_dir` | CL-EXT・CL-IR | CL-EXT |
