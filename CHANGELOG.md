@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Round 5 fixes
+
+- **Plans that GER always rejects were finalized when a path was long.** Templates such as CL-IR put the finding's path into a step text, and GER accepts step texts of 1 to 2000 characters (G-1 rejects the whole plan). ZET checked checklist `params` against GER's `actions.schema.json` but not `followup`, so a `.mcp.json` at a 2014-character path (legal: PATH_MAX is 4096) gave a CL-IR step of 2147 characters that passed `zet check` and `finalize`; for a checklist with `{path}` (for example CL-PIN for a `§22` finding) the draft's own suggestion failed ZET's own check. Now a filled-in step that would exceed 2000 characters keeps only the end of each value (the file name) behind `…`, so the step fits; the rule is fixed, so I-13 still compares the whole text with the template. I-4 checks every `followup` with GER's checklist step rules, in drafts too.
+- **A dangerous MCP server in `.claude/settings.json` got `edit_json select claude.hook`**, which removed an unrelated hook (for example `node .claude/format.mjs`) while the server stayed. GER has no hazard table entry for MCP servers in that file, so an `mcp.*` finding (`mcp.dangerous_command` / `mcp.unpinned`) there now gets a checklist (CL-REVIEW / CL-MCP-PIN) with a note, and I-13 refuses `edit_json` / `edit_toml` / `disable_mcp_server` for an `mcp.*` finding outside the files whose MCP servers GER can remove. Hook findings in the same file still get the hook edit.
+- **`zet check` / `finalize` crashed (exit 70) on malformed checklist steps** (a string step, `steps` that is not a list, a list or object as `blocking` / `id`, an object as `template`). The template comparison ignores malformed steps now, so these are I-4 (GER's step rules) and I-13 violations. A lone surrogate in a string of a plan or triage input passed to the Python API is I-11 rather than an encoding error (files with one were already refused when read).
+
+### 日本語（round 5 の修正）
+
+- **パスが長いと、GER が必ず拒否する計画を確定していた。** CL-IR などの雛形は手順の文に finding の path を入れ、GER は 1〜2000 文字の文しか受け付けない（G-1 で計画全体を拒否）。ZET はチェックリストの `params` を GER の `actions.schema.json` で確かめていたが `followup` は確かめておらず、2014 文字のパス（PATH_MAX は 4096 なので有効）の `.mcp.json` で 2147 文字の CL-IR の手順ができ、`zet check` と `finalize` を通っていた。`{path}` を含むチェックリスト（たとえば `§22` の finding の CL-PIN）では、draft 自身の提案が ZET 自身の検査に通らなかった。値を入れた手順が 2000 文字を超える場合は、それぞれの値を末尾（ファイル名）だけ残して `…` の後ろに置き、手順を上限に収める。決まった規則なので、I-13 は引き続き文全体を雛形と比べる。I-4 はすべての `followup` を、draft でも、GER のチェックリストの手順の規則で確かめる
+- **`.claude/settings.json` の危険な MCP サーバーに `edit_json select claude.hook` を提案していた。** そのため無関係なフック（たとえば `node .claude/format.mjs`）が取り除かれ、サーバーは残っていた。GER の危険パターンの表にはこのファイルの MCP サーバーの項目が無いため、ここでの `mcp.*` の finding（`mcp.dangerous_command` / `mcp.unpinned`）には注記付きのチェックリスト（CL-REVIEW / CL-MCP-PIN）を提案し、GER が MCP サーバーを取り除けるファイル以外での `mcp.*` の finding への `edit_json` / `edit_toml` / `disable_mcp_server` を I-13 で拒否する。同じファイルのフックの finding にはこれまでどおりフックの編集を提案する
+- **形の崩れたチェックリストの手順で `zet check` / `finalize` が落ちていた**（終了コード 70。文字列の手順、リストでない `steps`、`blocking` / `id` がリストかオブジェクト、`template` がオブジェクト）。雛形との比較は崩れた手順を無視するようにしたので、これらは I-4（GER の手順の規則）と I-13 の違反になる。Python の API に渡した計画・triage の入力の文字列に対になっていないサロゲートがあれば、エンコードのエラーではなく I-11 にする（そうしたファイルは読み込みの時点で以前から拒否していた）
+
 ### English-first
 
 ZET is now English-first, like ZES 0.5.0. Behavior does not change apart from the language of human-readable text.

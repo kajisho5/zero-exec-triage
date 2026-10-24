@@ -32,6 +32,7 @@ ZET はファイルシステムを見ません。ZES の findings 1.0 では `mo
 | その他のロックファイル・requirements（§15）、`*.egg-info`、脆弱な版 | — | — | CL-PKG / CL-VENV |
 | `.mcp.json`・`mcp.json`・`.codex/config.toml` の危険な MCP サーバー（§17 HIGH） | `disable_mcp_server` | CL-MCP（と CL-IR） | CL-MCP |
 | `npx` / `uvx` の MCP サーバー（§17 MEDIUM） | — | — | CL-MCP-PIN |
+| `.claude/settings.json` の `mcpServers` の MCP サーバー（§17 `mcp.dangerous_command` / `mcp.unpinned`）。GER の危険パターンの表に項目が無く、編集すると無関係なフックを取り除いてしまう | — | — | CL-REVIEW / CL-MCP-PIN |
 | `package.json` のライフサイクルスクリプト（§2 / §15）、`.claude/settings.json` の hooks（§7）、`.vscode/tasks.json` の `runOn`（§7） | `edit_json` | campaign があれば CL-IR | CL-IR / CL-REVIEW |
 | `ld.so.preload`、シェルの rc の行（§31 §10）、php.ini の `auto_prepend_file`（§4）、git config・`.envrc`（§26） | `remove_line` | CL-LDSO / CL-SHELL / CL-PHP-RESTART（と CL-IR） | CL-IR / CL-PHP-RESTART |
 | LaunchAgents / LaunchDaemons の plist（§30）、systemd のユニット | `quarantine` self | CL-LAUNCHD / CL-SYSTEMD・CL-IR | CL-IR |
@@ -41,7 +42,7 @@ ZET はファイルシステムを見ません。ZES の findings 1.0 では `mo
 
 他の finding の隔離で同じ対象ごと移される INFO（例: §30 が隔離する LaunchAgent の §10 INFO）は自動で defer せず、同じ group の隔離を提案します（再スキャンでも消えるため）。ロックファイルは書き換えず、秘密情報は自動でローテーションしません（チェックリストのまま）。
 
-チェックリストの手順の文言は英語です。英語化より前の ZET が作った下書き・計画には以前の日本語の文言が入っています。雛形のすべての手順がどちらか一方の言語で一字一句一致していれば、I-13 は引き続きそれを受け付けます（`zet/legacy_templates.py`）。GER が確かめるのは手順の形（`id`・`text`・`blocking`）だけで、文言は見ません。
+チェックリストの手順の文言は英語です。雛形の `{path}` は finding の path です。path（または `{pkg}` のパッケージ名）で手順が GER の上限の 2000 文字を超える場合は、その値を末尾だけ残して `…` の後ろに置き、手順を上限に収めます（決まった規則なので、I-13 は引き続き文全体を比べます）。英語化より前の ZET が作った下書き・計画には以前の日本語の文言が入っています。雛形のすべての手順がどちらか一方の言語で一字一句一致していれば、I-13 は引き続きそれを受け付けます（`zet/legacy_templates.py`）。GER が確かめるのは手順の形（`id`・`text`・`blocking`）だけで、文言は見ません。
 - **依存ゼロ**: Python 3.11 以上の標準ライブラリのみ。`python3 -I -S` で起動し、環境変数や site-packages の `.pth` がこのツールの中でコードを実行できないようにしています
 
 ## 使い方
@@ -77,7 +78,7 @@ bin/zet verify-log
 | I-1 | 入力の全 finding が items か held にちょうど 1 回現れ、items の decision は記入済み |
 | I-2 | 入力に存在しない finding_id を使わない |
 | I-3 | exception は exception_type・reason・recheck_at と判断者以外の承認が必要（人名は大文字小文字を区別せず比較）。defer も level_effective が INFO 以外なら reason が必要。decided_by / decided_at は必須 |
-| I-4 | remediate は owner・due_at・action が必要。action.target は正規化済みの絶対パス（`.` `..` 連続した `/` を先頭を含めどこにも含まない）で、finding の `path` と `action.relation` で結びつくこと: `self`（`path` そのもの。配下は不可。ZET は `path` がディレクトリかを判断できないため）、または閉じた関係 `npm_pkg_dir`・`npm_installed`・`pypi_record`・`ext_dir`・`skill_dir` の字句上の条件が成り立つもの（findings 1.1 の `related` にあるもの）。target が null の `none` はチェックリストだけ（`path` が null の crontab の finding など）。`finding_path` があれば finding の `path` と一致。action.type は GER が実行できる種別（`chmod`・`quarantine`・`edit_json`・`edit_toml`・`remove_line`・`disable_mcp_server`・`checklist`）。確定した action の params は GER の `actions.schema.json` に合うこと（draft では `select` のままでよい）。ファイルを変える remediate の item が同じ対象を持てるのは同じ `action.group` のときだけで、group の item は type と target が一致すること。chmod 以外のファイルを変える操作には入力から導いた `plan.scope` が必要で、対象はその下にあること。chmod の params は `{"mode": "0NNN"}` のみで setuid / setgid / sticky ビットと world-writable は不可（ZET は現在の mode を見られないため。権限を足さないことは GER が G-7 で確かめる）。action.reversible / skillpact_effects / evidence（plan 1.0 は evidence_hash）は導出値と一致（finalize が relation・finding_path とともに付与） |
+| I-4 | remediate は owner・due_at・action が必要。action.target は正規化済みの絶対パス（`.` `..` 連続した `/` を先頭を含めどこにも含まない）で、finding の `path` と `action.relation` で結びつくこと: `self`（`path` そのもの。配下は不可。ZET は `path` がディレクトリかを判断できないため）、または閉じた関係 `npm_pkg_dir`・`npm_installed`・`pypi_record`・`ext_dir`・`skill_dir` の字句上の条件が成り立つもの（findings 1.1 の `related` にあるもの）。target が null の `none` はチェックリストだけ（`path` が null の crontab の finding など）。`finding_path` があれば finding の `path` と一致。action.type は GER が実行できる種別（`chmod`・`quarantine`・`edit_json`・`edit_toml`・`remove_line`・`disable_mcp_server`・`checklist`）。確定した action の params は GER の `actions.schema.json` に合うこと（draft では `select` のままでよい）。`followup` はどれも、draft でも、そこにある GER のチェックリストの手順の規則（手順は 1〜64 個、文は 1〜2000 文字）に合うこと。ファイルを変える remediate の item が同じ対象を持てるのは同じ `action.group` のときだけで、group の item は type と target が一致すること。chmod 以外のファイルを変える操作には入力から導いた `plan.scope` が必要で、対象はその下にあること。chmod の params は `{"mode": "0NNN"}` のみで setuid / setgid / sticky ビットと world-writable は不可（ZET は現在の mode を見られないため。権限を足さないことは GER が G-7 で確かめる）。action.reversible / skillpact_effects / evidence（plan 1.0 は evidence_hash）は導出値と一致（finalize が relation・finding_path とともに付与） |
 | I-5 | skillpact.divergence が空でない finding は exception にできない。finalize は finding の skillpact の要約（`signed` / `divergence` / `diff_anomaly` / `declared_effects`）を item の `skillpact` に写し、GER が plan だけで I-5 / I-6 / I-7 を再検査できるようにする（書かれていれば入力と一致すること） |
 | I-6 | skillpact.diff_anomaly の finding、exec / network / spend / send を宣言したスキルの finding の remediate（GER の G-6 と同じ規則）、root が必要な対象（`/etc`・`/usr`・`/var` など）へのファイルを変える remediate は承認者 2 名以上（重複・大文字小文字だけの違いは 1 名と数える） |
 | I-7 | `skillpact.signed` が true（署名フィールドがあるだけで、ZES は検証していない。「L3 署名済み」ではない）で、`skillpact.divergence` が空でない finding は level_effective = CRITICAL（引き下げ不可） |
@@ -86,7 +87,7 @@ bin/zet verify-log
 | I-10 | errors[] のモジュールの finding は held にする（GER に渡さない）。held は errors[] のモジュールにだけ使える |
 | I-11 | strict スキーマ（未知フィールド・重複キー・64 段を超える入れ子（GER と同じ上限）・不正な時刻・有限でない数値・不正なサロゲートを拒否）。plan_hash を持つ plan は check / finalize でも plan_hash を検証 |
 | I-12 | 入力が partial なら plan も partial で、errors[] のモジュールをモジュール単位で held にする |
-| I-13 | 自動修復には、その finding の必須の後続チェックリスト（`action.followup`。マルウェアの痕跡なら CL-IR と CL-SECRET、LaunchAgent なら CL-LAUNCHD、ブラウザ拡張なら CL-EXT など）が付いていること。チェックリスト（と後続作業）は ZET の雛形の手順を変えずにすべて含むこと（手順を足すのはよい）。findings 1.1 では、finding の `kind` に許された操作であること。ロックファイルの finding（`pkg.lockfile_compromised`、または §15 のロックファイル）の remediate はチェックリスト（npm は CL-LOCKFILE、それ以外は CL-PKG）だけ（インストール済みの実体を隔離してもロックファイルの finding は消えないため） |
+| I-13 | 自動修復には、その finding の必須の後続チェックリスト（`action.followup`。マルウェアの痕跡なら CL-IR と CL-SECRET、LaunchAgent なら CL-LAUNCHD、ブラウザ拡張なら CL-EXT など）が付いていること。チェックリスト（と後続作業）は ZET の雛形の手順を変えずにすべて含むこと（手順を足すのはよい）。findings 1.1 では、finding の `kind` に許された操作であること。MCP の finding（`mcp.*`）を編集（`edit_json` / `edit_toml` / `disable_mcp_server`）できるのは、GER が MCP サーバーを取り除けるファイル（`.mcp.json`・`mcp.json`・`mcp_config.json`・`.claude.json`・`claude_desktop_config.json`・`.codex/config.toml`）だけ。ロックファイルの finding（`pkg.lockfile_compromised`、または §15 のロックファイル）の remediate はチェックリスト（npm は CL-LOCKFILE、それ以外は CL-PKG）だけ（インストール済みの実体を隔離してもロックファイルの finding は消えないため） |
 
 ## スキーマ
 

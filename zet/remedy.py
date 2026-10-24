@@ -127,10 +127,26 @@ _T = {
 }
 TEMPLATES = frozenset(_T)
 PATH_NONE = "(no path)"
+# GER accepts a checklist or followup step text of 1-2000 characters (actions.schema.json; G-1 rejects the whole plan)
+MAX_STEP_TEXT = 2000
+_PLACEHOLDER = re.compile(r"\{path\}|\{pkg\}")
+
+
+def _fill(t: str, path: str, pkg: str) -> str:
+    text = t.replace("{path}", path).replace("{pkg}", pkg)
+    n = len(_PLACEHOLDER.findall(t))
+    if len(text) <= MAX_STEP_TEXT or not n:
+        return text
+    # A path (legal up to PATH_MAX) or package name too long for GER's limit: each value keeps its end (the file name)
+    #   behind "…" so that the step fits. The rule is fixed, so I-13 still compares the whole text with the template
+    room = (MAX_STEP_TEXT - len(_PLACEHOLDER.sub("", t))) // n
+    vals = {"{path}": path, "{pkg}": pkg}
+    short = {k: v if len(v) <= room else "…" + v[len(v) - room + 1:] for k, v in vals.items()}
+    return _PLACEHOLDER.sub(lambda m: short[m.group()], t)
 
 
 def _steps(table: dict, template: str, path: str | None, pkg: str | None, none: str) -> list[dict]:
-    return [{"id": f"s{i}", "text": t.replace("{path}", path or none).replace("{pkg}", pkg or "<name>"), "blocking": b}
+    return [{"id": f"s{i}", "text": _fill(t, path or none, pkg or "<name>"), "blocking": b}
             for i, (t, b) in enumerate(table[template], 1)]
 
 
@@ -150,9 +166,13 @@ def template_ok(cl: dict, path: str | None, pkg: str | None = None) -> bool:
     The text may be the current English one or, for plans made by an older ZET, the Japanese one
     (legacy_templates). One checklist uses one language for all the steps of its template.
     """
-    if cl.get("template") not in _T:
+    # The plan may hold anything here (params of a checklist is any object): malformed steps never match, and are
+    #   reported as I-4 by the actions.schema.json check
+    if not isinstance(cl, dict) or not isinstance(cl.get("template"), str) or cl["template"] not in _T \
+            or not isinstance(cl.get("steps"), list):
         return False
-    have = {(s.get("id"), s.get("text"), s.get("blocking")) for s in cl.get("steps", [])}
+    have = {(s["id"], s["text"], s["blocking"]) for s in cl["steps"] if isinstance(s, dict) and isinstance(s.get("id"), str)
+            and isinstance(s.get("text"), str) and isinstance(s.get("blocking"), bool)}
     for table, none in ((_T, PATH_NONE), (TEMPLATES_JA, PATH_NONE_JA)):
         want = _steps(table, cl["template"], path, pkg, none)
         if all((s["id"], s["text"], s["blocking"]) in have for s in want):
@@ -239,6 +259,12 @@ KIND_ACTIONS = {
     "secret.token": {"checklist"},
     "runtime.cve": {"checklist"},
 }
+
+
+# Files in which GER can remove an MCP server (GER's hazards.MCP_JSON_BASENAMES for mcp.server, and .codex/config.toml for
+#   mcp.server.toml). Elsewhere an edit selects something else (for example a hook in .claude/settings.json) or nothing
+def mcp_editable(path: str | None) -> bool:
+    return bool(path) and (_b(path) in MCP_JSON or path.endswith("/.codex/config.toml"))
 
 
 def is_lockfile_finding(f: dict) -> bool:
@@ -337,7 +363,14 @@ def classify(f: dict) -> tuple[list[dict], str | None]:
             else:
                 cl = "CL-MCP-PIN"
         elif b in ("settings.json", "settings.local.json") and _b(posixpath.dirname(p)) == ".claude":
-            autos.append(_act("edit_json", p, "self", p, {"select": "claude.hook"}, _ir(f)))
+            if kind.startswith("mcp."):
+                # An MCP server under mcpServers of .claude/settings.json: GER has no hazard table entry for it (mcp.server
+                # covers MCP config files only), and select claude.hook would remove an unrelated hook. Removed by hand
+                cl = "CL-REVIEW" if kind == "mcp.dangerous_command" else "CL-MCP-PIN"
+                note = ("GER cannot remove an MCP server from .claude/settings.json (no hazard table entry); "
+                        "remove it by hand with the checklist")
+            else:
+                autos.append(_act("edit_json", p, "self", p, {"select": "claude.hook"}, _ir(f)))
         else:
             autos.append(_q(f, fu=_ir(f) or ("CL-IR",)))
             cl = "CL-IR"

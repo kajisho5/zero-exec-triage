@@ -11,7 +11,7 @@ from typing import Any
 
 from . import remedy
 from .core import (DECISIONS, FS_CHANGING, GER_ACTION_TYPES, PLAN_SCHEMA_VERSION, REVERSIBLE_BY_TYPE, RISKY_EFFECTS,
-                   ContractError, Violation, fmt_ts, parse_ts, plan_hash, schema_violations, validator)
+                   ContractError, Violation, canonical, fmt_ts, parse_ts, plan_hash, schema_violations, validator)
 
 MAX_DAYS = 3650  # maximum of deadlines / decision_window_days in triage-input.schema.json
 _CHMOD_MODE = re.compile(r"0[0-7]{3}")  # same as GER. No special bits (setuid / setgid / sticky)
@@ -21,8 +21,23 @@ RESERVED_SKILLPACT_POLICY = ("diff_anomaly_threshold", "destructive_requires_hum
 
 
 # --- Input validation (zet validate) ---------------------------------------
+def _encoding_violations(obj: Any, label: str) -> list[Violation]:
+    """I-11 for a value canonical JSON cannot hold (a lone surrogate, a non-finite number): plan_hash and the output could
+    not be written. load_json already rejects such files; this covers callers that pass objects."""
+    try:
+        canonical(obj)
+    except UnicodeEncodeError:
+        return [Violation("I-11", f"{label} contains a string that UTF-8 cannot represent (invalid surrogate)")]
+    except ValueError:
+        return [Violation("I-11", f"{label} contains a non-finite number")]
+    return []
+
+
 def validate_input(inp: Any) -> list[Violation]:
     v = schema_violations("triage-input.schema.json", inp, "triage-input")
+    if v:
+        return v
+    v = _encoding_violations(inp, "triage-input")
     if v:
         return v
     f = inp["findings"]
@@ -198,7 +213,11 @@ def _action_shape_violations(a: dict, fid: str, finding: dict, sug: list | None 
             v.append(Violation("I-4", f"the ids of {label}.steps[] must be unique (GER rejects repeated ids)", fid))
     if a["type"] == "checklist" and fus:
         v.append(Violation("I-4", "a checklist action cannot have followup (write the steps in params.steps)", fid))
-    for fu in fus:
+    for i, fu in enumerate(fus):
+        # GER checks a followup with the same step rules as checklist params (1-64 steps, text of 1-2000 characters, ...)
+        #   and rejects the whole plan otherwise (G-1). ger preview never fills followup, so it is checked in drafts too
+        for e in validator("vendor/actions.schema.json").errors({"type": "checklist", "params": fu}):
+            v.append(Violation("I-4", f"action.followup[{i}]{e.replace('/params', '', 1)} (GER's checklist step rules)", fid))
         if not remedy.template_ok(fu, path, pkg):
             v.append(Violation("I-13", f"{fu.get('template')} in action.followup must include all the steps of the ZET template", fid))
     need = remedy.required_followups(finding, a, sug or [])
@@ -215,6 +234,10 @@ def _action_shape_violations(a: dict, fid: str, finding: dict, sug: list | None 
         elif isinstance(a["params"], dict) and a["params"].get("template") != want:
             v.append(Violation("I-13", f"the checklist of a lockfile finding must be {want}, which contains the regeneration steps", fid))
     kind = finding.get("kind")
+    if isinstance(kind, str) and kind.startswith("mcp.") and a["type"] in ("edit_json", "edit_toml", "disable_mcp_server") \
+            and not remedy.mcp_editable(t):
+        v.append(Violation("I-13", f"GER cannot remove an MCP server from this file (no hazard table entry; {a['type']} would remove "
+                                   "something else, such as a hook, or nothing). Use a checklist", fid))
     if kind in remedy.KIND_ACTIONS and a["type"] not in remedy.KIND_ACTIONS[kind]:
         v.append(Violation("I-13", f"operation {a['type']} cannot be used on a finding of kind {kind} ({', '.join(sorted(remedy.KIND_ACTIONS[kind]))})", fid))
     return v
@@ -312,6 +335,9 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
     require_valid_input(inp)
     final = final or (isinstance(plan, dict) and "plan_hash" in plan)
     v = schema_violations("remediation-plan.schema.json", plan, "plan")
+    if v:
+        return v
+    v = _encoding_violations(plan, "plan")
     if v:
         return v
     f = inp["findings"]

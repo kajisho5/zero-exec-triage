@@ -373,6 +373,105 @@ class TestLockfileFindingStaysOpen(unittest.TestCase):
         self.assertEqual(it["action"]["type"], "checklist")
 
 
+class TestRound5(unittest.TestCase):
+    """Long paths (step texts within GER's 2000-character limit), MCP servers in .claude/settings.json, malformed steps."""
+
+    def test_long_path_followup_and_checklist_fit_gers_limit(self):
+        long_dir = R + "/" + "/".join(["d" * 240] * 8)  # a legal path (PATH_MAX is 4096) that makes a step longer than 2000
+        mcp = F("§17", "HIGH", long_dir + "/.mcp.json", "mcp-poisoning", kind="mcp.dangerous_command")
+        trivy = F("§22", "HIGH", long_dir + "/Dockerfile", detail="trivy image")
+        inp = make_input([mcp, trivy], version="1.1")
+        d = triage.draft(inp, NOW, "alice")
+        p = adopt(d)
+        for it in p["items"]:
+            a = it["action"]
+            for cl in ([a["params"]] if a["type"] == "checklist" else []) + a.get("followup", []):
+                lens = [len(st["text"]) for st in cl["steps"]]
+                self.assertLessEqual(max(lens), remedy.MAX_STEP_TEXT, (cl["template"], lens))
+        cl_ir = next(it for it in p["items"] if it["finding_id"] == mcp["id"])["action"]["followup"]
+        text = next(c for c in cl_ir if c["template"] == "CL-IR")["steps"][0]["text"]
+        self.assertEqual(len(text), remedy.MAX_STEP_TEXT)
+        self.assertTrue(text.endswith("/" + "d" * 240 + "/.mcp.json"), text[-80:])  # the end of the path is kept behind …
+        self.assertIn("Target: …", text)
+        self.assertEqual(triage.check(inp, p, now=NOW), [])
+        final = triage.finalize(inp, p, now=NOW)
+        self.assertEqual(triage.check(inp, final, final=True, now=NOW), [])
+        # I-13 still compares the whole text: the full (too long) path, or another shortening, is not the template
+        for mut in (lambda t: t.replace("…", "", 1), lambda t: t[:-1]):
+            q = copy.deepcopy(p)
+            st = next(c for c in next(it for it in q["items"] if it["finding_id"] == mcp["id"])["action"]["followup"]
+                      if c["template"] == "CL-IR")["steps"][0]
+            st["text"] = mut(st["text"])
+            self.assertIn("I-13", codes(triage.check(inp, q, now=NOW)))
+        # A followup step that GER always rejects (over 2000 characters) is I-4 before finalization, as GER's G-1 would be
+        q = copy.deepcopy(p)
+        a = next(it for it in q["items"] if it["finding_id"] == mcp["id"])["action"]
+        a["followup"][0]["steps"].append({"id": "s9", "text": "x" * 2001, "blocking": False})
+        v = triage.check(inp, q, now=NOW)
+        self.assertTrue(any(x.code == "I-4" and "followup[0]/steps/" in x.message and "2000" in x.message for x in v), v)
+        with self.assertRaises(ContractError):
+            triage.finalize(inp, q, now=NOW)
+        # Short paths are unchanged
+        self.assertEqual(remedy.checklist("CL-IR", "/a/b")["steps"][0]["text"],
+                         remedy._T["CL-IR"][0][0].replace("{path}", "/a/b"))
+
+    def test_mcp_server_in_claude_settings_is_a_checklist_not_a_hook_edit(self):
+        st = R + "/.claude/settings.json"
+        mcp = F("§17", "HIGH", st, "mcp-poisoning", detail="mcp", kind="mcp.dangerous_command",
+                locators=[{"format": "json", "pointer": "/mcpServers/evil"}])
+        pin = F("§17", "MEDIUM", st, detail="pin", kind="mcp.unpinned")
+        hook = F("§17", "HIGH", st, detail="hook")  # s17.agent_hook has no kind
+        inp = make_input([mcp, pin, hook], version="1.1")
+        sug = remedy.suggest_all([mcp, pin, hook])
+        self.assertEqual([s["label"] for s in sug[mcp["id"]]], ["checklist"])
+        self.assertEqual(sug[mcp["id"]][0]["action"]["params"]["template"], "CL-REVIEW")
+        self.assertIn("by hand", sug[mcp["id"]][0]["note"])
+        self.assertEqual([s["label"] for s in sug[pin["id"]]], ["checklist"])
+        self.assertEqual(sug[pin["id"]][0]["action"]["params"]["template"], "CL-MCP-PIN")
+        self.assertEqual(sug[hook["id"]][0]["action"]["params"], {"select": "claude.hook"})  # a hook finding still edits hooks
+        p = adopt(triage.draft(inp, NOW, "alice"))
+        self.assertEqual(triage.check(inp, p, now=NOW), [])
+        # Adopting an edit for the MCP finding by hand is I-13 (GER would remove a hook, or nothing)
+        for typ, params in (("edit_json", {"select": "claude.hook"}), ("disable_mcp_server", {"select": "mcp.server"})):
+            q = copy.deepcopy(p)
+            it = next(i for i in q["items"] if i["finding_id"] == mcp["id"])
+            it["action"] = {"type": typ, "target": st, "relation": "self", "finding_path": st, "params": params,
+                            "followup": [remedy.checklist("CL-MCP", st)]}
+            v = triage.check(inp, q, now=NOW)
+            self.assertTrue(any(x.code == "I-13" and "cannot remove an MCP server" in x.message for x in v), v)
+        # In an MCP config file the automatic removal is still offered
+        mj = F("§17", "HIGH", R + "/.mcp.json", kind="mcp.dangerous_command")
+        self.assertEqual(remedy.suggest_all([mj])[mj["id"]][0]["action"]["type"], "disable_mcp_server")
+
+    def test_malformed_checklist_steps_are_violations_not_crashes(self):
+        x = F("§8", "HIGH", R + "/.env", detail="secret")
+        inp = make_input([x])
+        p = adopt(triage.draft(inp, NOW, "alice"))
+        a = p["items"][0]["action"]
+        self.assertEqual(a["type"], "checklist")
+        good = copy.deepcopy(a["params"])
+        for params in ({**good, "steps": ["abc"]}, {**good, "steps": "abc"}, {**good, "steps": [1, None]},
+                       {**good, "steps": [dict(good["steps"][0], blocking=[True])] + good["steps"][1:]},
+                       {**good, "steps": [dict(good["steps"][0], id={"a": 1})] + good["steps"][1:]},
+                       {**good, "steps": [dict(good["steps"][0], blocking=1)] + good["steps"][1:]},
+                       {**good, "template": {"CL": 1}}, {**good, "template": ["CL-SECRET"]}, {"steps": good["steps"]}):
+            q = copy.deepcopy(p)
+            q["items"][0]["action"]["params"] = params
+            v = triage.check(inp, q, now=NOW)
+            self.assertTrue(v and set(codes(v)) <= {"I-4", "I-13"}, (params, v))
+            with self.assertRaises(ContractError):
+                triage.finalize(inp, q, now=NOW)
+        # A lone surrogate in a string of the plan is I-11 (plan_hash cannot be computed), not an encoding error
+        q = copy.deepcopy(p)
+        q["items"][0]["owner"] = "team\ud800"
+        self.assertEqual(codes(triage.check(inp, q, now=NOW)), ["I-11"])
+        with self.assertRaises(ContractError):
+            triage.finalize(inp, q, now=NOW)
+        bad = copy.deepcopy(inp)
+        bad["findings"]["findings"][0]["detail"] = "x\udc00"
+        self.assertEqual(codes(triage.validate_input(bad)), ["I-11"])
+
+
 class TestLegacyJapaneseTemplates(unittest.TestCase):
     """Drafts and plans made by ZET before the English-first release carry the Japanese step texts. I-13 still
     accepts them word for word (legacy_templates), so an old draft can be finalized and an old plan checked."""
