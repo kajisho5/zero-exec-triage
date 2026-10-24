@@ -22,12 +22,14 @@ RESERVED_SKILLPACT_POLICY = ("diff_anomaly_threshold", "destructive_requires_hum
 
 # --- Input validation (zet validate) ---------------------------------------
 def _encoding_violations(obj: Any, label: str) -> list[Violation]:
-    """I-11 for a string that UTF-8 cannot represent (a lone surrogate): plan_hash and the output could not be written.
-    load_json already rejects such files; this covers callers that pass objects."""
+    """I-11 for a value canonical JSON cannot hold (a lone surrogate, a non-finite number): plan_hash and the output could
+    not be written. load_json already rejects such files; this covers callers that pass objects."""
     try:
         canonical(obj)
-    except (UnicodeEncodeError, ValueError):
+    except UnicodeEncodeError:
         return [Violation("I-11", f"{label} contains a string that UTF-8 cannot represent (invalid surrogate)")]
+    except ValueError:
+        return [Violation("I-11", f"{label} contains a non-finite number")]
     return []
 
 
