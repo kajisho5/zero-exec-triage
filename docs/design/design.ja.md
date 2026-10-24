@@ -112,7 +112,7 @@ A-7〜A-9 はいずれも任意のフィールドで、従来の plan はその�
 | I-10 | `held` の finding は `items` に入らない（修復層へ渡さない） | 契約 §4 |
 | I-11 | タイムスタンプはすべて RFC 3339 UTC（`Z`）、未知フィールドなし | 共通契約 |
 | I-12 | 入力が `partial` なら plan も `partial` かつ `held` 非空 | 失敗の伝播 |
-| I-13 | 自動修復の `action.followup` に、finding から決まる必須の後続作業（§9.3）がある。checklist と followup は ZET の雛形の手順をすべて変えずに含む。findings 1.1 では `kind` に許された操作だけ。ロックファイルの finding（§9.6）は checklist（再生成の手順を含む雛形）だけ | 自動修復はインシデントの終わりではない。自動で消えない finding を自動修復と数えない |
+| I-13 | 自動修復の `action.followup` に、finding から決まる必須の後続作業（§9.3）がある。checklist と followup は ZET の雛形の手順をすべて変えずに含む。findings 1.1 では `kind` に許された操作だけ。MCP の finding（`mcp.*`）を編集できるのは、GER が MCP サーバーを取り除けるファイルだけ（§9.3）。ロックファイルの finding（§9.6）は checklist（再生成の手順を含む雛形）だけ | 自動修復はインシデントの終わりではない。自動で消えない finding を自動修復と数えない |
 
 0.2 で I-4 を広げた: `target` は `action.relation`（§9.2）で finding の `path` と結びつけばよい。`relation: none`（target null）は checklist だけ。確定した action の params は GER の `actions.schema.json`（vendor）に合うこと。ファイルを変える item が同じ対象を持てるのは同じ `group` のときだけ。chmod 以外のファイルを変える操作には入力から導いた `plan.scope` が必要で、対象はその下。root が必要な対象（`/etc` など）は承認者 2 名（I-6）。
 
@@ -228,6 +228,10 @@ class Constraints: allowed: frozenset[Decision]; min_approvers: int; level_effec
 findings 1.0 では `module`・`path`（basename とディレクトリの形）・`level`・`campaign` だけで判断する（`detail` は解析しない。設計 0.2 Q-1 のとおり壊れやすく安全でないため）。主な対応は README の表を参照。同じ対象への auto は group にまとめ、他の finding の **quarantine** が同じ対象（同じファイル、スキルのディレクトリ、拡張機能のディレクトリ、node_modules のパッケージ）を扱う finding には同じ group の quarantine を提案する（編集は他の finding を消さないのでまとめない）。
 
 必須の後続作業は、提案と同じ操作（type と target）を採用した場合は提案の `followup`、それ以外の自動修復では、campaign のある finding・マルウェアの痕跡のモジュール（§2 §15 §18 §20 §24 §30 §31 §40 §42）なら CL-IR。chmod と checklist には求めない。雛形（CL-PKG・CL-LOCKFILE・CL-VENV・CL-SECRET・CL-IR・CL-LAUNCHD・CL-SYSTEMD・CL-CRON・CL-EXT・CL-MCP・CL-MCP-PIN・CL-SHELL・CL-LDSO・CL-PHP・CL-PHP-RESTART・CL-UPGRADE・CL-PWN・CL-PIN・CL-SKILL・CL-ENV・CL-REVIEW）は閉じた表で、`{path}` を finding の path、`{pkg}` を findings 1.1 の `subject.package`（無ければ `<name>`）に置き換える。
+
+GER は手順の文を 1〜2000 文字まで受け付け（checklist の params とすべての `followup`）、それ以外は計画全体を拒否する（G-1）。パスは PATH_MAX（4096）まで有効なので、深い階層のパスで手順が長くなりうる。値を入れた手順が 2000 文字を超える場合は、手順の中の置き換え箇所に長さを均等に割り振り、それぞれの値を末尾（ファイル名）だけ残して `…` の後ろに置き、手順がちょうど上限に収まるようにする。決まった規則なので、I-13 は引き続き文全体を雛形と比べる（全長のパスやほかの縮め方は一致しない）。対象のパスそのものは `action.target` にある。I-4 は `ger preview` が埋めない `followup` を、draft でも GER のチェックリストの手順の規則（`actions.schema.json`）で確かめる。
+
+`.claude/settings.json` の `mcpServers` の MCP サーバー（findings 1.1 の `kind: mcp.dangerous_command` / `mcp.unpinned`）には checklist（CL-REVIEW / CL-MCP-PIN）だけを提案する。GER の危険パターンの表にはこのファイルの MCP サーバーの項目が無く（`mcp.server` は `.mcp.json`・`mcp.json`・`mcp_config.json`・`.claude.json`・`claude_desktop_config.json`、`mcp.server.toml` は `.codex/config.toml`）、`edit_json select claude.hook` はサーバーを残したまま無関係なフックを取り除いてしまうため。I-13 は、それ以外のファイルの `mcp.*` の finding に対する `edit_json` / `edit_toml` / `disable_mcp_server` を拒否する。同じファイルのフックの finding（findings 1.1 で `kind` が無い）にはこれまでどおり `edit_json select claude.hook` を提案する。
 
 ### 9.4 findings 1.1
 ZES 0.4.0 は findings 1.1 を出す。ZET は `schema_version: "1.1"` の findings を `schemas/vendor/findings-1.1.schema.json`（ZES の `schemas/findings.schema.json` の写し。VENDOR.json に版固定）で検証し、任意の `kind` / `subject` / `locators` / `related` / `evidence` / `scan_roots` を使う。1.0 の findings（ZES 0.3.x）も引き続き `schemas/vendor/findings.schema.json` で受け付け、1.0 の findings に 1.1 の項目があれば strict のため拒否する。
