@@ -162,7 +162,8 @@ def _is_draft_params(a: dict) -> bool:
     return isinstance(p, dict) and ("select" in p or (not p and a["type"] in FS_CHANGING - {"chmod"}))
 
 
-def _action_shape_violations(a: dict, fid: str, finding: dict, sug: list | None = None, final: bool = False) -> list[Violation]:
+def _action_shape_violations(a: dict, fid: str, finding: dict, sug: list | None = None, final: bool = False,
+                             locators_known: bool = True) -> list[Violation]:
     """Do not finalize actions that GER always rejects, or actions on targets unrelated to the finding (I-4 / I-13)."""
     v: list[Violation] = []
     t = a["target"]
@@ -224,8 +225,10 @@ def _action_shape_violations(a: dict, fid: str, finding: dict, sug: list | None 
     missing = sorted(need - {fu.get("template") for fu in fus})
     if missing:
         v.append(Violation("I-13", f"automatic remediation requires the follow-up work {', '.join(missing)} (action.followup)", fid))
-    if remedy.campaign_without_hook(finding) and a["type"] != "checklist":
-        # The hook removal of GER (claude.hook) cannot clear a campaign string that is not in a hook (round 7 F4)
+    if locators_known and remedy.campaign_without_hook(finding) and a["type"] != "checklist":
+        # The hook removal of GER (claude.hook) cannot clear a campaign string that is not in a hook (round 7 F4).
+        #   Only from findings 1.1 on, where ZES names the hooks that hold the string: findings 1.0 have no locators, so
+        #   an automatic edit decided on them (a plan of an earlier ZET) is not refused (the draft suggests a checklist)
         v.append(Violation("I-13", "a §7 campaign string in .claude/settings.json that is in no hook (no locator) can only be "
                                    "removed by hand: only a checklist (CL-IR) is allowed", fid))
     if remedy.is_lockfile_finding(finding):
@@ -504,7 +507,7 @@ def check(inp: dict, plan: Any, final: bool = False, now: dt.datetime | None = N
         elif final and x.get("skillpact"):
             v.append(Violation("I-5", "an item of a finalized plan requires the summary of the finding's skillpact (skillpact)", fid))
         if a is not None:
-            v += _action_shape_violations(a, fid, x, sugs.get(fid), final)
+            v += _action_shape_violations(a, fid, x, sugs.get(fid), final, f["schema_version"] != "1.0")
             if "evidence_hash" in a and a["evidence_hash"] != x["evidence_hash"]:
                 v.append(Violation("I-4", "action.evidence_hash must equal the finding's evidence_hash", fid))
             if "evidence" in a and a["evidence"] != evidence_of(x):

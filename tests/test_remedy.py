@@ -660,6 +660,20 @@ class TestRound7(unittest.TestCase):
         next(it for it in q["items"] if it["finding_id"] == env["id"])["action"]["locators"] = ["/env/A"]
         self.assertIn("I-4", codes(triage.check(inp, q, now=NOW)))
 
+    def test_findings_10_plans_still_pass(self):
+        # findings 1.0 have no locators: the draft suggests the checklist, but an automatic edit (a plan of an earlier
+        #   ZET) is not refused
+        x = F("§7", "HIGH", R + "/.claude/settings.json", "actions-cool")
+        inp = make_input([x])
+        d = triage.draft(inp, NOW, "alice")
+        self.assertEqual([s["label"] for s in d["items"][0]["constraints"]["suggested_actions"]], ["checklist"])
+        p = adopt(d)
+        p["items"][0]["action"] = {"type": "edit_json", "target": x["path"], "relation": "self", "finding_path": x["path"],
+                                   "params": preview_params({"type": "edit_json"}),
+                                   "followup": [remedy.checklist("CL-IR", x["path"])]}
+        p["items"][0]["approved_by"] = ["sec-a"]
+        self.assertEqual(triage.check(inp, p, now=NOW), [])
+
 
 if __name__ == "__main__":
     unittest.main()

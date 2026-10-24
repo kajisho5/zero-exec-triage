@@ -326,7 +326,8 @@ def pointer_locators(f: dict) -> list[str]:
 def campaign_without_hook(f: dict) -> bool:
     """A §7 finding (a campaign string) in .claude/settings(.local).json that names no hook: ZES puts the hook entries
     that hold the string into locators, so without one the string is somewhere else in the file (env, permissions, a
-    comment ...), which no hook removal clears. Planned as a checklist (CL-IR); I-13 refuses an automatic edit for it."""
+    comment ...), which no hook removal clears. Planned as a checklist (CL-IR); from findings 1.1 on, I-13 refuses an
+    automatic edit for it (findings 1.0 have no locators at all, so there an absent locator proves nothing)."""
     p = f.get("path")
     return (f["module"] == "§7" and isinstance(p, str) and _b(p) in ("settings.json", "settings.local.json")
             and _b(posixpath.dirname(p)) == ".claude" and not pointer_locators(f))
